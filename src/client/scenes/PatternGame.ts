@@ -1,22 +1,32 @@
 import { GameObjects, Scene } from 'phaser';
 import {
-  type ClueMode,
-  type ClueResult,
   type Coord,
   coordKey,
   coordLabel,
   generatePattern,
-  getClue,
   getRemainingCount,
   getWeightedColors,
   parsePatternInput,
   todayUtcDate,
   validatePattern,
 } from '../../shared/pattern';
+import {
+  type DailySessionResponse,
+  type LeaderboardEntry,
+  type PlayerSession,
+  applyGuessToSession,
+  createCustomPuzzleId,
+  createDailyPuzzleId,
+  createInitialSession,
+  createShareText,
+  dailyPatternForPuzzle,
+  setClueModeInSession,
+  toggleMarkerInSession,
+} from '../../shared/game';
 
 type StoredGuess = {
   coord: Coord;
-  clue: ClueResult;
+  clue: PlayerSession['guesses'][number]['clue'];
 };
 
 type TileView = {
@@ -30,6 +40,7 @@ type TileView = {
 type ColorName = 'red' | 'blue' | 'orange';
 type Screen = 'landing' | 'game';
 type CustomPane = 'closed' | 'menu' | 'seed' | 'pattern';
+type Modal = 'none' | 'clues' | 'result';
 
 const COLORS: Record<ColorName | 'green' | 'base' | 'line' | 'marked', number> =
   {
@@ -46,15 +57,16 @@ export class PatternGame extends Scene {
   private screen: Screen = 'landing';
   private customPane: CustomPane = 'closed';
   private pattern: Coord[] = [];
-  private guesses = new Map<string, StoredGuess>();
-  private foundKeys = new Set<string>();
-  private markerKeys = new Set<string>();
+  private session: PlayerSession | null = null;
+  private leaderboard: LeaderboardEntry[] = [];
+  private playerRank: LeaderboardEntry | null = null;
   private tileViews: TileView[] = [];
-  private mode: ClueMode = 'balanced';
+  private interactiveObjects: GameObjects.GameObject[] = [];
   private markerMode = false;
-  private seed = 'pattern';
-  private activeDate = todayUtcDate();
+  private modal: Modal = 'none';
+  private customSeed = 'pattern';
   private gameLabel = 'Daily';
+  private currentStatus = 'Choose a mode to start.';
   private boardSize = 360;
   private boardX = 0;
   private boardY = 0;
@@ -71,7 +83,31 @@ export class PatternGame extends Scene {
     this.showLanding('Choose a mode to start.');
   }
 
+  private clearInteractiveObjects(): void {
+    for (const object of this.interactiveObjects) {
+      if (!object.active) {
+        continue;
+      }
+
+      object.removeAllListeners();
+      if (object.input) {
+        this.input.disable(object);
+        this.input.clear(object, true);
+      }
+      object.destroy();
+    }
+
+    this.interactiveObjects = [];
+    this.input.resetCursor();
+  }
+
+  private trackInteractive<T extends GameObjects.GameObject>(object: T): T {
+    this.interactiveObjects.push(object);
+    return object;
+  }
+
   private renderScreen(): void {
+    this.clearInteractiveObjects();
     this.children.removeAll(true);
     this.tileViews = [];
 
@@ -85,24 +121,25 @@ export class PatternGame extends Scene {
 
   private showLanding(status: string): void {
     this.screen = 'landing';
+    this.currentStatus = status;
     this.renderScreen();
     this.setLandingStatus(status);
   }
 
   private startDailyGame(): void {
-    this.activeDate = todayUtcDate();
-    this.seed = 'pattern';
-    this.gameLabel = `Daily ${this.activeDate}`;
-    this.pattern = generatePattern(this.seed, this.activeDate);
-    this.startGame();
+    this.currentStatus = 'Loading daily puzzle...';
+    this.renderScreen();
+    void this.loadDailySession();
   }
 
   private startSeedGame(seed: string): void {
-    this.activeDate = 'custom';
-    this.seed = seed;
     this.gameLabel = `Seed ${seed}`;
     this.pattern = generatePattern(seed, 'custom');
-    this.startGame();
+    this.session = createInitialSession(
+      createCustomPuzzleId('custom-seed', seed),
+      this.pattern.length
+    );
+    this.startGame('Find the linked pattern.');
   }
 
   private startPickedPattern(): void {
@@ -113,21 +150,60 @@ export class PatternGame extends Scene {
       return;
     }
 
-    this.activeDate = 'custom';
-    this.seed = 'picked';
     this.gameLabel = 'Custom pattern';
     this.pattern = pattern;
-    this.startGame();
+    this.session = createInitialSession(
+      createCustomPuzzleId('custom-pattern', 'picked'),
+      this.pattern.length
+    );
+    this.startGame('Find the linked pattern.');
   }
 
-  private startGame(): void {
+  private startGame(status: string, modal: Modal = 'none'): void {
     this.screen = 'game';
-    this.guesses.clear();
-    this.foundKeys.clear();
-    this.markerKeys.clear();
     this.markerMode = false;
+    this.modal = modal;
+    this.currentStatus = status;
     this.renderScreen();
-    this.setGameStatus('Find the linked pattern.');
+    this.setGameStatus(status);
+  }
+
+  private async loadDailySession(): Promise<void> {
+    try {
+      const response = await fetch('/api/daily/session');
+      if (!response.ok) {
+        throw new Error(`Daily session failed: ${response.status}`);
+      }
+
+      const data = toDailySessionResponse(await response.json());
+      if (!data) {
+        throw new Error('Daily session response was invalid.');
+      }
+      this.applyDailyResponse(data);
+      this.startGame(
+        data.session.solved
+          ? `Solved in ${data.session.guesses.length} guesses.`
+          : 'Daily progress loaded.',
+        data.session.solved ? 'result' : 'none'
+      );
+    } catch (error) {
+      console.warn('Falling back to local daily session:', error);
+      const puzzleId = createDailyPuzzleId(todayUtcDate());
+      this.pattern = dailyPatternForPuzzle(puzzleId);
+      this.session = createInitialSession(puzzleId, this.pattern.length);
+      this.leaderboard = [];
+      this.playerRank = null;
+      this.gameLabel = `Daily #${puzzleId.puzzleNumber}`;
+      this.startGame('Local daily preview. Reddit persistence is unavailable here.');
+    }
+  }
+
+  private applyDailyResponse(data: DailySessionResponse): void {
+    this.session = data.session;
+    this.leaderboard = data.leaderboard;
+    this.playerRank = data.playerRank;
+    this.pattern = [];
+    this.gameLabel = `Daily #${data.session.puzzleId.puzzleNumber}`;
   }
 
   private drawLanding(): void {
@@ -185,8 +261,8 @@ export class PatternGame extends Scene {
     const centerX = this.scale.width / 2;
     this.createButton(centerX - 118, y, 'Random seed', () => {
       this.customPane = 'seed';
-      this.seed = this.randomSeed();
-      this.showLanding(`Random seed ready: ${this.seed}`);
+      this.customSeed = this.randomSeed();
+      this.showLanding(`Random seed ready: ${this.customSeed}`);
     });
     this.createButton(centerX + 118, y, 'Pick pattern', () => {
       this.customPane = 'pattern';
@@ -198,7 +274,7 @@ export class PatternGame extends Scene {
   private drawSeedMenu(y: number): void {
     const centerX = this.scale.width / 2;
     this.add
-      .text(centerX, y - 38, `Seed: ${this.seed}`, {
+      .text(centerX, y - 38, `Seed: ${this.customSeed}`, {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: '20px',
         color: '#18212b',
@@ -206,11 +282,11 @@ export class PatternGame extends Scene {
       .setOrigin(0.5);
 
     this.createButton(centerX - 112, y + 10, 'New number', () => {
-      this.seed = this.randomSeed();
-      this.showLanding(`Random seed ready: ${this.seed}`);
+      this.customSeed = this.randomSeed();
+      this.showLanding(`Random seed ready: ${this.customSeed}`);
     });
     this.createButton(centerX + 112, y + 10, 'Start seed', () => {
-      this.startSeedGame(this.seed);
+      this.startSeedGame(this.customSeed);
     });
   }
 
@@ -250,7 +326,7 @@ export class PatternGame extends Scene {
           })
           .setOrigin(0.5);
 
-        this.add
+        const pickerZone = this.add
           .zone(x, tileY, cell, cell)
           .setOrigin(0)
           .setInteractive({ useHandCursor: true })
@@ -262,6 +338,7 @@ export class PatternGame extends Scene {
             }
             this.showLanding(this.pickerValidationMessage());
           });
+        this.trackInteractive(pickerZone);
       }
     }
 
@@ -276,6 +353,11 @@ export class PatternGame extends Scene {
   }
 
   private drawGame(): void {
+    if (!this.session) {
+      this.showLanding('No active game session.');
+      return;
+    }
+
     const width = this.scale.width;
     const height = this.scale.height;
     const mobile = width < 760;
@@ -301,16 +383,23 @@ export class PatternGame extends Scene {
 
     this.layoutBoard(mobile);
     this.createTiles();
-    this.drawRulesPanel(mobile);
-
+    if (mobile) {
+      this.createButton(width / 2 + 124, 94, 'Clues', () => {
+        this.modal = 'clues';
+        this.renderScreen();
+      });
+    } else {
+      this.drawRulesPanel(false);
+    }
     const buttonY = mobile ? height - 30 : height - 44;
     this.createButton(
       width / 2 - 124,
       buttonY,
       mobile ? this.shortModeLabel() : this.modeLabel(),
       () => {
-      this.mode = this.mode === 'balanced' ? 'proximity' : 'balanced';
-      this.renderScreen();
+        void this.setActiveClueMode(
+          this.session?.clueMode === 'balanced' ? 'proximity' : 'balanced'
+        );
       }
     ).setName('mode-button');
     this.createButton(
@@ -318,8 +407,8 @@ export class PatternGame extends Scene {
       buttonY,
       mobile ? this.shortMarkerModeLabel() : this.markerModeLabel(),
       () => {
-      this.markerMode = !this.markerMode;
-      this.renderScreen();
+        this.markerMode = !this.markerMode;
+        this.renderScreen();
       }
     ).setName('marker-button');
     this.createButton(width / 2 + 124, buttonY, mobile ? 'New' : 'New game', () => {
@@ -339,6 +428,13 @@ export class PatternGame extends Scene {
       .setOrigin(0.5);
 
     this.redrawGame();
+    this.setGameStatus(this.currentStatus);
+
+    if (this.modal === 'clues') {
+      this.drawModal('Clues', this.clueLines(), []);
+    } else if (this.modal === 'result') {
+      this.drawResultModal();
+    }
   }
 
   private layoutBoard(mobile: boolean): void {
@@ -346,9 +442,9 @@ export class PatternGame extends Scene {
     const height = this.scale.height;
 
     if (mobile) {
-      this.boardSize = Math.max(220, Math.min(width - 28, height - 420, 330));
+      this.boardSize = Math.max(250, Math.min(width - 28, height - 210, 360));
       this.boardX = (width - this.boardSize) / 2;
-      this.boardY = 90;
+      this.boardY = 108;
     } else {
       const rulesWidth = 270;
       this.boardSize = Math.max(320, Math.min(width - rulesWidth - 90, height - 190, 460));
@@ -386,6 +482,7 @@ export class PatternGame extends Scene {
         zone.on('pointerdown', () => {
           this.handleTile(coord);
         });
+        this.trackInteractive(zone);
 
         this.tileViews.push({ coord, graphics, label, marker, zone });
       }
@@ -405,13 +502,7 @@ export class PatternGame extends Scene {
       })
       .setOrigin(mobile ? 0.5 : 0.5);
 
-    const rows = [
-      { label: 'Part of pattern', color: COLORS.green },
-      { label: 'Same column', color: COLORS.red },
-      { label: 'Same row', color: COLORS.blue },
-      { label: 'Diagonal', color: COLORS.orange },
-      { label: 'X mode marks no-guess notes', color: COLORS.line },
-    ];
+    const rows = this.clueRows();
 
     rows.forEach((row, index) => {
       const y = panelY + 30 + index * (mobile ? 24 : 28);
@@ -427,6 +518,126 @@ export class PatternGame extends Scene {
         })
         .setOrigin(0, 0.5);
     });
+  }
+
+  private drawResultModal(): void {
+    if (!this.session) {
+      return;
+    }
+
+    const lines = [
+      `Solved in ${this.session.guesses.length} guesses`,
+      this.playerRank
+        ? `Rank #${this.playerRank.rank} today`
+        : this.session.puzzleId.mode === 'daily'
+          ? 'Result saved'
+          : 'Custom result',
+    ];
+    const leaderboardLines = this.leaderboard
+      .slice(0, 3)
+      .map((entry) => `#${entry.rank} ${entry.displayName}: ${entry.guesses}`);
+
+    this.drawModal('Solved', [...lines, ...leaderboardLines], [
+      {
+        label: 'Copy result',
+        onClick: () => {
+          void this.copyResult();
+        },
+      },
+      {
+        label: 'Close',
+        onClick: () => {
+          this.modal = 'none';
+          this.renderScreen();
+        },
+      },
+    ]);
+  }
+
+  private drawModal(
+    title: string,
+    lines: string[],
+    buttons: { label: string; onClick: () => void }[]
+  ): void {
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const modalWidth = Math.min(width - 32, 420);
+    const modalHeight = Math.min(
+      height - 48,
+      150 + lines.length * 24 + (buttons.length > 0 ? 48 : 0)
+    );
+    const x = (width - modalWidth) / 2;
+    const y = (height - modalHeight) / 2;
+    const blocker = this.add
+      .zone(0, 0, width, height)
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: false });
+    const overlay = this.add.graphics();
+    const panel = this.add.graphics();
+
+    blocker.on('pointerdown', () => undefined);
+    this.trackInteractive(blocker);
+
+    overlay.fillStyle(0x111820, 0.42);
+    overlay.fillRect(0, 0, width, height);
+    panel.fillStyle(0xf8f1e8, 1);
+    panel.fillRoundedRect(x, y, modalWidth, modalHeight, 10);
+    panel.lineStyle(2, COLORS.line, 1);
+    panel.strokeRoundedRect(x, y, modalWidth, modalHeight, 10);
+
+    this.add
+      .text(width / 2, y + 28, title, {
+        fontFamily: 'Arial Black, Arial, sans-serif',
+        fontSize: '22px',
+        color: '#18212b',
+      })
+      .setOrigin(0.5);
+
+    this.add
+      .text(width / 2, y + 70, lines.join('\n'), {
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '16px',
+        color: '#33404c',
+        align: 'center',
+        lineSpacing: 6,
+        wordWrap: { width: modalWidth - 36 },
+      })
+      .setOrigin(0.5, 0);
+
+    const buttonY = y + modalHeight - 30;
+    if (buttons.length === 0) {
+      this.createButton(width / 2, buttonY, 'Close', () => {
+        this.modal = 'none';
+        this.renderScreen();
+      });
+      return;
+    }
+
+    const spacing = Math.min(136, modalWidth / Math.max(buttons.length, 1));
+    const startX = width / 2 - ((buttons.length - 1) * spacing) / 2;
+    buttons.forEach((button, index) => {
+      this.createButton(startX + index * spacing, buttonY, button.label, button.onClick);
+    });
+  }
+
+  private clueRows(): { label: string; color: number }[] {
+    return [
+      { label: 'Part of pattern', color: COLORS.green },
+      { label: 'Same column', color: COLORS.red },
+      { label: 'Same row', color: COLORS.blue },
+      { label: 'Diagonal', color: COLORS.orange },
+      { label: 'X mode marks no-guess notes', color: COLORS.line },
+    ];
+  }
+
+  private clueLines(): string[] {
+    return [
+      'Green: tile is in the pattern',
+      'Red: same vertical column',
+      'Blue: same horizontal row',
+      'Orange: diagonal from a pattern tile',
+      'X mode: visual no-guess notes',
+    ];
   }
 
   private createButton(
@@ -450,60 +661,150 @@ export class PatternGame extends Scene {
     button.on('pointerout', () => {
       button.setStyle({
         backgroundColor:
-          label.startsWith('X mode') && this.markerMode ? '#d9480f' : '#25313b',
+          label.startsWith('X') && this.markerMode ? '#d9480f' : '#25313b',
       });
     });
     button.on('pointerdown', onClick);
-    if (label.startsWith('X mode') && this.markerMode) {
+    if (label.startsWith('X') && this.markerMode) {
       button.setStyle({ backgroundColor: '#d9480f' });
     }
+    this.trackInteractive(button);
     return button;
   }
 
+  private async copyResult(): Promise<void> {
+    if (!this.session) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(createShareText(this.session));
+      this.currentStatus = 'Result copied.';
+    } catch {
+      this.currentStatus = 'Could not copy result in this browser.';
+    }
+    this.renderScreen();
+  }
+
   private handleTile(coord: Coord): void {
+    if (!this.session) {
+      return;
+    }
+
     const key = coordKey(coord);
 
     if (this.markerMode) {
-      if (!this.guesses.has(key) && !this.foundKeys.has(key)) {
-        if (this.markerKeys.has(key)) {
-          this.markerKeys.delete(key);
-        } else {
-          this.markerKeys.add(key);
-        }
+      void this.toggleActiveMarker(coord);
+      return;
+    }
+
+    if (this.session.guesses.some((guess) => coordKey(guess.coord) === key)) {
+      return;
+    }
+
+    void this.submitActiveGuess(coord);
+  }
+
+  private async submitActiveGuess(coord: Coord): Promise<void> {
+    if (!this.session) {
+      return;
+    }
+
+    if (this.session.puzzleId.mode === 'daily' && this.pattern.length === 0) {
+      await this.postDailyUpdate('/api/daily/guess', { coord });
+      return;
+    }
+
+    this.session = applyGuessToSession(this.session, this.pattern, coord);
+    this.currentStatus = this.session.solved
+      ? `Solved in ${this.session.guesses.length} guesses.`
+      : this.session.guesses.at(-1)?.wasGreen
+        ? 'Pattern tile found.'
+        : 'Clue added.';
+    if (this.session.solved) {
+      this.modal = 'result';
+    }
+    this.renderScreen();
+  }
+
+  private async toggleActiveMarker(coord: Coord): Promise<void> {
+    if (!this.session) {
+      return;
+    }
+
+    if (this.session.puzzleId.mode === 'daily' && this.pattern.length === 0) {
+      await this.postDailyUpdate('/api/daily/mark', { coord });
+      return;
+    }
+
+    this.session = toggleMarkerInSession(this.session, coord);
+    this.currentStatus = 'X mark updated.';
+    this.renderScreen();
+  }
+
+  private async setActiveClueMode(clueMode: 'balanced' | 'proximity'): Promise<void> {
+    if (!this.session) {
+      return;
+    }
+
+    if (this.session.puzzleId.mode === 'daily' && this.pattern.length === 0) {
+      await this.postDailyUpdate('/api/daily/mode', { clueMode });
+      return;
+    }
+
+    this.session = setClueModeInSession(this.session, clueMode);
+    this.currentStatus = 'Clue display mode updated.';
+    this.renderScreen();
+  }
+
+  private async postDailyUpdate(
+    url: string,
+    body: Record<string, unknown>
+  ): Promise<void> {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(`Daily update failed: ${response.status}`);
+      }
+
+      const data = toDailySessionResponse(await response.json());
+      if (!data) {
+        throw new Error('Daily update response was invalid.');
+      }
+      this.applyDailyResponse(data);
+      this.currentStatus = data.session.solved
+        ? `Solved in ${data.session.guesses.length} guesses.`
+        : 'Daily progress saved.';
+      if (data.session.solved) {
+        this.modal = 'result';
       }
       this.renderScreen();
-      return;
-    }
-
-    if (this.guesses.has(key)) {
-      return;
-    }
-
-    this.markerKeys.delete(key);
-    const clue = getClue(coord, this.pattern);
-    this.guesses.set(key, { coord, clue });
-
-    if (clue.green) {
-      this.foundKeys.add(key);
-    }
-
-    const remaining = getRemainingCount(this.pattern, this.foundKeys);
-    if (remaining === 0) {
+    } catch (error) {
+      console.error('Daily update failed:', error);
+      this.currentStatus = 'Could not save daily progress. Try again.';
       this.renderScreen();
-      this.setGameStatus(`Solved in ${this.guesses.size} guesses.`);
-      return;
     }
-
-    this.renderScreen();
-    this.setGameStatus(clue.green ? 'Pattern tile found.' : 'Clue added.');
   }
 
   private redrawGame(): void {
+    if (!this.session) {
+      return;
+    }
+
     const stats = this.children.getByName('stats');
     if (stats instanceof GameObjects.Text) {
-      const remaining = getRemainingCount(this.pattern, this.foundKeys);
+      const remaining =
+        this.session.totalTiles > 0
+          ? Math.max(0, this.session.totalTiles - this.session.foundKeys.length)
+          : getRemainingCount(this.pattern, this.session.foundKeys);
       stats.setText(
-        `Remaining: ${remaining}   Guesses: ${this.guesses.size}   ${this.gameLabel}`
+        `Remaining: ${remaining}   Guesses: ${this.session.guesses.length}   ${this.gameLabel}`
       );
     }
 
@@ -512,14 +813,34 @@ export class PatternGame extends Scene {
     }
   }
 
+  private guessMap(): Map<string, StoredGuess> {
+    const guesses = new Map<string, StoredGuess>();
+    if (!this.session) {
+      return guesses;
+    }
+
+    for (const guess of this.session.guesses) {
+      guesses.set(coordKey(guess.coord), {
+        coord: guess.coord,
+        clue: guess.clue,
+      });
+    }
+
+    return guesses;
+  }
+
   private drawTile(view: TileView): void {
+    if (!this.session) {
+      return;
+    }
+
     const key = coordKey(view.coord);
     const x = this.boardX + view.coord.col * this.tileSize;
     const y = this.boardY + view.coord.row * this.tileSize;
     const gap = Math.max(4, this.tileSize * 0.05);
     const size = this.tileSize - gap;
     const radius = Math.max(5, this.tileSize * 0.08);
-    const guess = this.guesses.get(key);
+    const guess = this.guessMap().get(key);
     const graphics = view.graphics;
 
     graphics.clear();
@@ -527,7 +848,7 @@ export class PatternGame extends Scene {
     if (guess?.clue.green) {
       graphics.fillStyle(COLORS.green, 1);
       graphics.fillRoundedRect(x + gap / 2, y + gap / 2, size, size, radius);
-      const weights = getWeightedColors(guess.clue, this.mode);
+      const weights = getWeightedColors(guess.clue, this.session.clueMode);
       if (weights.length > 0) {
         const inset = size * 0.22;
         this.drawWeightedArea(
@@ -540,7 +861,7 @@ export class PatternGame extends Scene {
         );
       }
     } else if (guess) {
-      const weights = getWeightedColors(guess.clue, this.mode);
+      const weights = getWeightedColors(guess.clue, this.session.clueMode);
       if (weights.length > 0) {
         this.drawWeightedArea(
           graphics,
@@ -556,7 +877,7 @@ export class PatternGame extends Scene {
       }
     } else {
       graphics.fillStyle(
-        this.markerKeys.has(key) ? COLORS.marked : COLORS.base,
+        this.session.markerKeys.includes(key) ? COLORS.marked : COLORS.base,
         1
       );
       graphics.fillRoundedRect(x + gap / 2, y + gap / 2, size, size, radius);
@@ -571,7 +892,7 @@ export class PatternGame extends Scene {
 
     view.marker.setPosition(x + this.tileSize / 2, y + this.tileSize / 2);
     view.marker.setFontSize(Math.max(24, Math.floor(this.tileSize * 0.5)));
-    view.marker.setVisible(this.markerKeys.has(key));
+    view.marker.setVisible(this.session.markerKeys.includes(key));
 
     view.zone.setPosition(x + gap / 2, y + gap / 2);
     view.zone.setSize(size, size);
@@ -619,7 +940,9 @@ export class PatternGame extends Scene {
   }
 
   private modeLabel(): string {
-    return this.mode === 'balanced' ? 'Balanced clues' : 'Proximity clues';
+    return this.session?.clueMode === 'proximity'
+      ? 'Proximity clues'
+      : 'Balanced clues';
   }
 
   private markerModeLabel(): string {
@@ -627,7 +950,7 @@ export class PatternGame extends Scene {
   }
 
   private shortModeLabel(): string {
-    return this.mode === 'balanced' ? 'Balanced' : 'Proximity';
+    return this.session?.clueMode === 'proximity' ? 'Proximity' : 'Balanced';
   }
 
   private shortMarkerModeLabel(): string {
@@ -648,3 +971,64 @@ export class PatternGame extends Scene {
     }
   }
 }
+
+const toDailySessionResponse = (value: unknown): DailySessionResponse | null => {
+  if (!isRecord(value) || value.type !== 'daily-session') {
+    return null;
+  }
+
+  if (!isPlayerSession(value.session) || !Array.isArray(value.leaderboard)) {
+    return null;
+  }
+
+  if (
+    value.playerRank !== null &&
+    value.playerRank !== undefined &&
+    !isLeaderboardEntry(value.playerRank)
+  ) {
+    return null;
+  }
+
+  const leaderboard: LeaderboardEntry[] = [];
+  for (const entry of value.leaderboard) {
+    if (!isLeaderboardEntry(entry)) {
+      return null;
+    }
+    leaderboard.push(entry);
+  }
+
+  return {
+    type: 'daily-session',
+    session: value.session,
+    leaderboard,
+    playerRank: value.playerRank ?? null,
+  };
+};
+
+const isPlayerSession = (value: unknown): value is PlayerSession => {
+  return (
+    isRecord(value) &&
+    isRecord(value.puzzleId) &&
+    Array.isArray(value.guesses) &&
+    Array.isArray(value.foundKeys) &&
+    Array.isArray(value.markerKeys) &&
+    typeof value.clueMode === 'string' &&
+    typeof value.totalTiles === 'number' &&
+    typeof value.solved === 'boolean' &&
+    typeof value.startedAt === 'number'
+  );
+};
+
+const isLeaderboardEntry = (value: unknown): value is LeaderboardEntry => {
+  return (
+    isRecord(value) &&
+    typeof value.rank === 'number' &&
+    typeof value.displayName === 'string' &&
+    typeof value.guesses === 'number' &&
+    typeof value.solvedAt === 'number'
+  );
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null;
+};

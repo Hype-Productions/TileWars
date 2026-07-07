@@ -1,6 +1,28 @@
 import { Hono } from 'hono';
-import type { DailyResponse } from '../../shared/api';
+import { context } from '@devvit/web/server';
+import type {
+  DailyGuessRequest,
+  DailyLeaderboardResponse,
+  DailyMarkRequest,
+  DailyModeRequest,
+  DailyResponse,
+  DailySessionResponse,
+} from '../../shared/api';
+import {
+  applyGuessToSession,
+  createDailyPuzzleId,
+  createInitialSession,
+  dailyPatternForPuzzle,
+  setClueModeInSession,
+  toggleMarkerInSession,
+} from '../../shared/game';
 import { todayUtcDate } from '../../shared/pattern';
+import {
+  loadDailyLeaderboard,
+  loadDailySession,
+  saveBestDailyResult,
+  saveDailySession,
+} from '../core/dailyStorage';
 
 export const api = new Hono();
 
@@ -11,3 +33,166 @@ api.get('/daily', (c) => {
     seed: 'pattern',
   });
 });
+
+api.get('/daily/session', async (c) => {
+  const user = currentUser();
+  const puzzleId = createDailyPuzzleId(todayUtcDate());
+  const existing = await loadDailySession(puzzleId.date, user.userId);
+  const session =
+    existing ?? createInitialSession(puzzleId, dailyPatternForPuzzle(puzzleId).length);
+
+  if (!existing) {
+    await saveDailySession(session, user.userId);
+  }
+
+  const leaderboard = await loadDailyLeaderboard(puzzleId.date, user.userId);
+
+  return c.json<DailySessionResponse>({
+    type: 'daily-session',
+    session,
+    leaderboard: leaderboard.leaderboard,
+    playerRank: leaderboard.playerRank,
+  });
+});
+
+api.post('/daily/guess', async (c) => {
+  const request = await c.req.json<DailyGuessRequest>();
+  if (!isValidCoord(request.coord)) {
+    return c.json({ status: 'error', message: 'Invalid coordinate.' }, 400);
+  }
+
+  const user = currentUser();
+  const session = await getOrCreateTodaySession(user.userId);
+  const pattern = dailyPatternForPuzzle(session.puzzleId);
+  const nextSession = applyGuessToSession(session, pattern, request.coord);
+  await saveDailySession(nextSession, user.userId);
+
+  if (nextSession.solved && nextSession.solvedAt !== null) {
+    await saveBestDailyResult({
+      userId: user.userId,
+      displayName: user.displayName,
+      date: nextSession.puzzleId.date,
+      puzzleNumber: nextSession.puzzleId.puzzleNumber,
+      guesses: nextSession.guesses.length,
+      solvedAt: nextSession.solvedAt,
+    });
+  }
+
+  const leaderboard = await loadDailyLeaderboard(
+    nextSession.puzzleId.date,
+    user.userId
+  );
+
+  return c.json<DailySessionResponse>({
+    type: 'daily-session',
+    session: nextSession,
+    leaderboard: leaderboard.leaderboard,
+    playerRank: leaderboard.playerRank,
+  });
+});
+
+api.post('/daily/mark', async (c) => {
+  const request = await c.req.json<DailyMarkRequest>();
+  if (!isValidCoord(request.coord)) {
+    return c.json({ status: 'error', message: 'Invalid coordinate.' }, 400);
+  }
+
+  const user = currentUser();
+  const session = await getOrCreateTodaySession(user.userId);
+  const nextSession = toggleMarkerInSession(session, request.coord);
+  await saveDailySession(nextSession, user.userId);
+
+  const leaderboard = await loadDailyLeaderboard(
+    nextSession.puzzleId.date,
+    user.userId
+  );
+
+  return c.json<DailySessionResponse>({
+    type: 'daily-session',
+    session: nextSession,
+    leaderboard: leaderboard.leaderboard,
+    playerRank: leaderboard.playerRank,
+  });
+});
+
+api.post('/daily/mode', async (c) => {
+  const request = await c.req.json<DailyModeRequest>();
+  const clueMode = request.clueMode === 'proximity' ? 'proximity' : 'balanced';
+  const user = currentUser();
+  const session = await getOrCreateTodaySession(user.userId);
+  const nextSession = setClueModeInSession(session, clueMode);
+  await saveDailySession(nextSession, user.userId);
+
+  const leaderboard = await loadDailyLeaderboard(
+    nextSession.puzzleId.date,
+    user.userId
+  );
+
+  return c.json<DailySessionResponse>({
+    type: 'daily-session',
+    session: nextSession,
+    leaderboard: leaderboard.leaderboard,
+    playerRank: leaderboard.playerRank,
+  });
+});
+
+api.get('/daily/leaderboard', async (c) => {
+  const user = currentUser();
+  const puzzleId = createDailyPuzzleId(todayUtcDate());
+  const leaderboard = await loadDailyLeaderboard(puzzleId.date, user.userId);
+
+  return c.json<DailyLeaderboardResponse>({
+    type: 'daily-leaderboard',
+    leaderboard: leaderboard.leaderboard,
+    playerRank: leaderboard.playerRank,
+  });
+});
+
+const getOrCreateTodaySession = async (userId: string) => {
+  const puzzleId = createDailyPuzzleId(todayUtcDate());
+  const existing = await loadDailySession(puzzleId.date, userId);
+  if (existing) {
+    return existing;
+  }
+
+  const session = createInitialSession(
+    puzzleId,
+    dailyPatternForPuzzle(puzzleId).length
+  );
+  await saveDailySession(session, userId);
+  return session;
+};
+
+const currentUser = (): { userId: string; displayName: string } => {
+  const userId = context.userId ?? context.loid ?? 'local-preview';
+  const displayName = context.username ?? 'anonymous';
+
+  return {
+    userId,
+    displayName,
+  };
+};
+
+const isValidCoord = (coord: unknown): coord is { row: number; col: number } => {
+  if (typeof coord !== 'object' || coord === null) {
+    return false;
+  }
+
+  if (!('row' in coord) || !('col' in coord)) {
+    return false;
+  }
+
+  const row = coord.row;
+  const col = coord.col;
+
+  return (
+    Number.isInteger(row) &&
+    Number.isInteger(col) &&
+    typeof row === 'number' &&
+    typeof col === 'number' &&
+    row >= 0 &&
+    row < 5 &&
+    col >= 0 &&
+    col < 5
+  );
+};
