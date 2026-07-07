@@ -8,6 +8,9 @@ const config: Phaser.Types.Core.GameConfig = {
   type: AUTO,
   parent: 'game-container',
   backgroundColor: '#f6f0e8',
+  antialias: true,
+  antialiasGL: true,
+  roundPixels: true,
   scale: {
     // Keep a fixed game resolution but automatically scale it to fit within the available
     // web-view / device while maintaining aspect ratio.

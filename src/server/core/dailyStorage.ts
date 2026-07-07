@@ -64,6 +64,17 @@ export const saveBestDailyResult = async (
   });
 };
 
+export const clearDailyPlayerData = async (
+  date: string,
+  userId: string
+): Promise<void> => {
+  await Promise.all([
+    redis.del(storageKeys.dailySession(date, userId)),
+    redis.hDel(storageKeys.dailyResults(date), [userId]),
+    redis.zRem(storageKeys.dailyLeaderboard(date), [userId]),
+  ]);
+};
+
 export const loadDailyLeaderboard = async (
   date: string,
   userId: string

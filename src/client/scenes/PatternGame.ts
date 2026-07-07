@@ -42,11 +42,18 @@ type Screen = 'landing' | 'game';
 type CustomPane = 'closed' | 'menu' | 'seed' | 'pattern';
 type Modal = 'none' | 'clues' | 'result';
 
-const COLORS: Record<ColorName | 'green' | 'base' | 'line' | 'marked', number> =
-  {
+const BOARD_DIMENSION = 5;
+const TEXT_RESOLUTION =
+  typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+
+const COLORS: Record<
+  ColorName | 'green' | 'base' | 'line' | 'marked' | 'pending',
+  number
+> = {
     base: 0xf8f1e8,
     line: 0x25313b,
     marked: 0xede0cf,
+    pending: 0xfff0bf,
     green: 0x43c978,
     red: 0xef5350,
     blue: 0x3f8cff,
@@ -72,6 +79,8 @@ export class PatternGame extends Scene {
   private boardY = 0;
   private tileSize = 72;
   private pickerKeys = new Set<string>();
+  private pendingTileKey: string | null = null;
+  private dailyUpdateInFlight = false;
 
   constructor() {
     super('PatternGame');
@@ -107,6 +116,7 @@ export class PatternGame extends Scene {
   }
 
   private renderScreen(): void {
+    this.tweens.killAll();
     this.clearInteractiveObjects();
     this.children.removeAll(true);
     this.tileViews = [];
@@ -200,8 +210,12 @@ export class PatternGame extends Scene {
 
   private applyDailyResponse(data: DailySessionResponse): void {
     this.session = data.session;
-    this.leaderboard = data.leaderboard;
-    this.playerRank = data.playerRank;
+    if (data.leaderboard) {
+      this.leaderboard = data.leaderboard;
+    }
+    if (data.playerRank !== undefined) {
+      this.playerRank = data.playerRank;
+    }
     this.pattern = [];
     this.gameLabel = `Daily #${data.session.puzzleId.puzzleNumber}`;
   }
@@ -440,19 +454,25 @@ export class PatternGame extends Scene {
   private layoutBoard(mobile: boolean): void {
     const width = this.scale.width;
     const height = this.scale.height;
+    let rawBoardSize: number;
 
     if (mobile) {
-      this.boardSize = Math.max(250, Math.min(width - 28, height - 210, 360));
-      this.boardX = (width - this.boardSize) / 2;
+      rawBoardSize = Math.max(250, Math.min(width - 28, height - 210, 360));
+      this.boardSize = snapBoardSize(rawBoardSize);
+      this.boardX = Math.round((width - this.boardSize) / 2);
       this.boardY = 108;
     } else {
       const rulesWidth = 270;
-      this.boardSize = Math.max(320, Math.min(width - rulesWidth - 90, height - 190, 460));
-      this.boardX = Math.max(28, (width - rulesWidth - this.boardSize) / 2);
-      this.boardY = Math.max(88, (height - this.boardSize) / 2 - 12);
+      rawBoardSize = Math.max(
+        320,
+        Math.min(width - rulesWidth - 90, height - 190, 460)
+      );
+      this.boardSize = snapBoardSize(rawBoardSize);
+      this.boardX = Math.round(Math.max(28, (width - rulesWidth - this.boardSize) / 2));
+      this.boardY = Math.round(Math.max(88, (height - this.boardSize) / 2 - 12));
     }
 
-    this.tileSize = this.boardSize / 5;
+    this.tileSize = this.boardSize / BOARD_DIMENSION;
   }
 
   private createTiles(): void {
@@ -465,6 +485,7 @@ export class PatternGame extends Scene {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '16px',
             color: '#18212b',
+            resolution: TEXT_RESOLUTION,
           })
           .setOrigin(0.5);
         const marker = this.add
@@ -472,6 +493,7 @@ export class PatternGame extends Scene {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '34px',
             color: '#1f2933',
+            resolution: TEXT_RESOLUTION,
           })
           .setOrigin(0.5);
         const zone = this.add
@@ -536,22 +558,33 @@ export class PatternGame extends Scene {
     const leaderboardLines = this.leaderboard
       .slice(0, 3)
       .map((entry) => `#${entry.rank} ${entry.displayName}: ${entry.guesses}`);
-
-    this.drawModal('Solved', [...lines, ...leaderboardLines], [
+    const buttons = [
       {
         label: 'Copy result',
         onClick: () => {
           void this.copyResult();
         },
       },
-      {
+    ];
+
+    if (this.session.puzzleId.mode === 'daily') {
+      buttons.push({
+        label: 'Dev reset',
+        onClick: () => {
+          void this.resetDailyForTesting();
+        },
+      });
+    }
+
+    buttons.push({
         label: 'Close',
         onClick: () => {
           this.modal = 'none';
           this.renderScreen();
         },
-      },
-    ]);
+    });
+
+    this.drawModal('Solved', [...lines, ...leaderboardLines], buttons);
   }
 
   private drawModal(
@@ -653,6 +686,7 @@ export class PatternGame extends Scene {
         color: '#ffffff',
         backgroundColor: '#25313b',
         padding: { left: 12, right: 12, top: 8, bottom: 8 },
+        resolution: TEXT_RESOLUTION,
       })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true });
@@ -686,8 +720,20 @@ export class PatternGame extends Scene {
     this.renderScreen();
   }
 
+  private async resetDailyForTesting(): Promise<void> {
+    if (!this.session || this.session.puzzleId.mode !== 'daily') {
+      return;
+    }
+
+    this.modal = 'none';
+    this.currentStatus = 'Resetting daily test history...';
+    await this.postDailyUpdate('/api/daily/dev-reset', {});
+    this.currentStatus = 'Daily test history reset.';
+    this.renderScreen();
+  }
+
   private handleTile(coord: Coord): void {
-    if (!this.session) {
+    if (!this.session || this.dailyUpdateInFlight) {
       return;
     }
 
@@ -711,6 +757,11 @@ export class PatternGame extends Scene {
     }
 
     if (this.session.puzzleId.mode === 'daily' && this.pattern.length === 0) {
+      const key = coordKey(coord);
+      this.pendingTileKey = key;
+      this.currentStatus = 'Checking tile...';
+      this.redrawGame();
+      this.setGameStatus(this.currentStatus);
       await this.postDailyUpdate('/api/daily/guess', { coord });
       return;
     }
@@ -728,7 +779,7 @@ export class PatternGame extends Scene {
   }
 
   private async toggleActiveMarker(coord: Coord): Promise<void> {
-    if (!this.session) {
+    if (!this.session || this.dailyUpdateInFlight) {
       return;
     }
 
@@ -761,6 +812,7 @@ export class PatternGame extends Scene {
     url: string,
     body: Record<string, unknown>
   ): Promise<void> {
+    this.dailyUpdateInFlight = true;
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -784,11 +836,15 @@ export class PatternGame extends Scene {
       if (data.session.solved) {
         this.modal = 'result';
       }
+      this.pendingTileKey = null;
       this.renderScreen();
     } catch (error) {
       console.error('Daily update failed:', error);
       this.currentStatus = 'Could not save daily progress. Try again.';
+      this.pendingTileKey = null;
       this.renderScreen();
+    } finally {
+      this.dailyUpdateInFlight = false;
     }
   }
 
@@ -808,8 +864,9 @@ export class PatternGame extends Scene {
       );
     }
 
+    const guesses = this.guessMap();
     for (const view of this.tileViews) {
-      this.drawTile(view);
+      this.drawTile(view, guesses);
     }
   }
 
@@ -829,7 +886,7 @@ export class PatternGame extends Scene {
     return guesses;
   }
 
-  private drawTile(view: TileView): void {
+  private drawTile(view: TileView, guesses: Map<string, StoredGuess>): void {
     if (!this.session) {
       return;
     }
@@ -840,12 +897,19 @@ export class PatternGame extends Scene {
     const gap = Math.max(4, this.tileSize * 0.05);
     const size = this.tileSize - gap;
     const radius = Math.max(5, this.tileSize * 0.08);
-    const guess = this.guessMap().get(key);
+    const guess = guesses.get(key);
+    const pending = key === this.pendingTileKey;
     const graphics = view.graphics;
 
+    graphics.setPosition(0, 0);
     graphics.clear();
 
-    if (guess?.clue.green) {
+    if (pending && !guess) {
+      graphics.fillStyle(COLORS.pending, 1);
+      graphics.fillRoundedRect(x + gap / 2, y + gap / 2, size, size, radius);
+      graphics.lineStyle(3, COLORS.orange, 0.85);
+      graphics.strokeRoundedRect(x + gap / 2, y + gap / 2, size, size, radius);
+    } else if (guess?.clue.green) {
       graphics.fillStyle(COLORS.green, 1);
       graphics.fillRoundedRect(x + gap / 2, y + gap / 2, size, size, radius);
       const weights = getWeightedColors(guess.clue, this.session.clueMode);
@@ -883,8 +947,10 @@ export class PatternGame extends Scene {
       graphics.fillRoundedRect(x + gap / 2, y + gap / 2, size, size, radius);
     }
 
-    graphics.lineStyle(2, COLORS.line, 1);
-    graphics.strokeRoundedRect(x + gap / 2, y + gap / 2, size, size, radius);
+    if (!pending || guess) {
+      graphics.lineStyle(2, COLORS.line, 1);
+      graphics.strokeRoundedRect(x + gap / 2, y + gap / 2, size, size, radius);
+    }
 
     view.label.setPosition(x + this.tileSize / 2, y + this.tileSize / 2);
     view.label.setFontSize(Math.max(12, Math.floor(this.tileSize * 0.19)));
@@ -896,6 +962,23 @@ export class PatternGame extends Scene {
 
     view.zone.setPosition(x + gap / 2, y + gap / 2);
     view.zone.setSize(size, size);
+
+    if (pending && !guess) {
+      this.animatePendingTile(view);
+    }
+  }
+
+  private animatePendingTile(view: TileView): void {
+    const targets = [view.graphics, view.label, view.marker];
+    this.tweens.add({
+      targets,
+      x: '+=4',
+      y: '-=2',
+      yoyo: true,
+      repeat: 3,
+      duration: 85,
+      ease: 'Sine.easeInOut',
+    });
   }
 
   private drawWeightedArea(
@@ -977,7 +1060,7 @@ const toDailySessionResponse = (value: unknown): DailySessionResponse | null => 
     return null;
   }
 
-  if (!isPlayerSession(value.session) || !Array.isArray(value.leaderboard)) {
+  if (!isPlayerSession(value.session)) {
     return null;
   }
 
@@ -990,19 +1073,28 @@ const toDailySessionResponse = (value: unknown): DailySessionResponse | null => 
   }
 
   const leaderboard: LeaderboardEntry[] = [];
-  for (const entry of value.leaderboard) {
-    if (!isLeaderboardEntry(entry)) {
-      return null;
+  if (Array.isArray(value.leaderboard)) {
+    for (const entry of value.leaderboard) {
+      if (!isLeaderboardEntry(entry)) {
+        return null;
+      }
+      leaderboard.push(entry);
     }
-    leaderboard.push(entry);
   }
 
-  return {
+  const response: DailySessionResponse = {
     type: 'daily-session',
     session: value.session,
-    leaderboard,
-    playerRank: value.playerRank ?? null,
   };
+
+  if (Array.isArray(value.leaderboard)) {
+    response.leaderboard = leaderboard;
+  }
+  if (value.playerRank !== undefined) {
+    response.playerRank = value.playerRank;
+  }
+
+  return response;
 };
 
 const isPlayerSession = (value: unknown): value is PlayerSession => {
@@ -1031,4 +1123,8 @@ const isLeaderboardEntry = (value: unknown): value is LeaderboardEntry => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null;
+};
+
+const snapBoardSize = (size: number): number => {
+  return Math.floor(size / BOARD_DIMENSION) * BOARD_DIMENSION;
 };

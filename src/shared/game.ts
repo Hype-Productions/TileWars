@@ -61,8 +61,8 @@ export type LeaderboardEntry = {
 export type DailySessionResponse = {
   type: 'daily-session';
   session: PlayerSession;
-  leaderboard: LeaderboardEntry[];
-  playerRank: LeaderboardEntry | null;
+  leaderboard?: LeaderboardEntry[];
+  playerRank?: LeaderboardEntry | null;
 };
 
 export type DailyGuessRequest = {

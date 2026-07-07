@@ -1,52 +1,70 @@
-You are writing a Devvit web application that will be executed on Reddit.com.
+You are writing a Devvit Web application that runs inside Reddit posts.
 
 ## Tech Stack
 
-- **Frontend**: Phaser, Vite
-- **Backend**: Node.js v22 serverless environment (Devvit), Hono, TRPC
-- **Communication**: tRPC v11 for end-to-end type safety
+- **Frontend**: Phaser 4, Vite
+- **Backend**: Devvit Web serverless runtime, Node.js v22, Hono
+- **Persistence**: Devvit Redis via `@devvit/web/server`
+- **Testing**: Vitest
 
 ## Layout & Architecture
 
-- `/src/server`: **Backend Code**. This runs in a secure, serverless environment.
-  - `trpc.ts`: Defines the API router and procedures.
-  - `index.ts`: Main server entry point (Hono app).
-  - Access `redis`, `reddit`, and `context` here via `@devvit/web/server`.
-- `/src/client`: **Frontend Code**. This is executed inside of an iFrame on reddit.com
-  - To add an entrypoint, create a HTML file and add to the mapping inside of `devvit.json`
-  - Entrypoints:
-    - `game.html`: The main React entry point (Expanded View).
-    - `splash.html`: The initial React entry point (Inline View). This will be shown in the reddit.com feed. Please keep it fast and keep heavy dependencies inside of `game.html`
-- `/src/shared`: **Shared Code**. Code to share between the client and server
+- `/src/client`: Frontend code executed inside the Reddit iframe.
+  - `game.html` / `game.ts`: Expanded playable Phaser game.
+  - `splash.html` / `splash.ts`: Lightweight inline feed view.
+  - `scenes/PatternGame.ts`: Main Phaser scene and UI.
+- `/src/server`: Backend code executed in Devvit's serverless environment.
+  - `index.ts`: Hono app entry point.
+  - `routes/api.ts`: Daily session, guess, marker, mode, leaderboard, and dev reset APIs.
+  - `routes/menu.ts`: Devvit menu action endpoints.
+  - `routes/triggers.ts`: Devvit trigger endpoints.
+  - `core/dailyStorage.ts`: Redis key naming and persistence helpers.
+  - `core/post.ts`: Reddit custom post creation helper.
+- `/src/shared`: Code shared by client, server, and tests.
+  - `pattern.ts`: Pure pattern generation, validation, and clue logic.
+  - `game.ts`: Shared game/session/result types and session reducers.
+  - `api.ts`: Shared API response/request type exports.
+- `/tests`: Focused Vitest coverage for pattern and game/session behavior.
 
-## Frontend
+## Devvit Config
 
-### Rules
+- `devvit.json` defines the app name, post entrypoints, server bundle, menu items, and triggers.
+- When adding a new post entrypoint, menu endpoint, or trigger endpoint, update `devvit.json` in the same change.
+- This project uses Devvit Web only. Do not add Blocks APIs or `@devvit/public-api`.
 
-- Instead of `window.location` or `window.assign`, use `navigateTo` from `@devvit/web/client`
+## Frontend Rules
 
-### Limitations
+- Keep heavy game code in `game.html` / `game.ts`; keep `splash.html` fast and lightweight.
+- Avoid `window.location` or `window.assign` for Reddit navigation. Use `navigateTo` from `@devvit/web/client`.
+- Do not use `window.alert`; use Devvit client helpers such as `showToast` or in-game UI.
+- File downloads are not supported in Reddit iframes; use clipboard flows instead.
+- Do not use inline scripts in HTML files. Add separate `.ts` entry files.
+- Keep Daily leaderboard gameplay server-backed. Custom seed and custom pattern modes may remain local/off-leaderboard.
 
-- `window.alert`: Use `showToast` or `showForm` from `@devvit/web/client`
-- File downloads: Use clipboard API with `showToast` to confirm
-- Geolocation, camera, microphone, and notifications web APIs: No alternatives
-- Inline script tags inside of `html` files: Use a script tag and separate js/ts file
+## Backend Rules
+
+- Access `redis`, `reddit`, and `context` only from server-side code through `@devvit/web/server`.
+- Daily clue calculation for leaderboard-eligible play should stay server-side.
+- Keep Redis access behind storage helpers in `/src/server/core` where practical.
+- Do not introduce external paid services, external hosting dependencies, AI/LLM calls, or payment flows.
 
 ## Commands
 
-- `npm run type-check`: Check typescript types
-- `npm run lint`: Check the linter
-- `npm run test -- my-file-name`: Run tests isolated to a file
+- `npm run login`: Log in to Devvit.
+- `npm run dev -- TileFinder`: Run Devvit playtest against `r/TileFinder`.
+- `npx devvit playtest TileFinder`: Equivalent direct playtest command.
+- `npm run type-check`: TypeScript project check.
+- `npm run lint`: ESLint.
+- `npm run test`: Run all Vitest tests.
+- `npm run test -- tests/game.test.ts`: Run one test file.
+- `npm run build`: Build client and server bundles.
+- `npm run deploy`: Type-check, lint, then `devvit upload`.
+- `npm run launch`: Upload and publish for Reddit review.
 
 ## Code Style
 
-- Prefer type aliases over interfaces when writing typescript
-- Prefer named exports over default exports
-- Never cast typescript types
-
-## Global Rules
-
-- You may find code that references blocks or `@devvit/public-api` while building a feature. Do NOT use this code as this project is configured to use Devvit web only.
-- Whenever you add an endpoint for a new menu item action, ensure that you've added the corresponding mapping to `devvit.json` so that it is properly registered
-
-Docs: https://developers.reddit.com/docs/llms.txt.
+- Prefer type aliases over interfaces.
+- Prefer named exports over default exports.
+- Avoid TypeScript casts unless there is no cleaner narrowing option.
+- Keep pure game rules in `/src/shared` so they can be tested without Phaser or Devvit.
+- Keep Phaser UI changes scoped and responsive for both desktop Reddit posts and mobile Reddit views.

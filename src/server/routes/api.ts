@@ -18,6 +18,7 @@ import {
 } from '../../shared/game';
 import { todayUtcDate } from '../../shared/pattern';
 import {
+  clearDailyPlayerData,
   loadDailyLeaderboard,
   loadDailySession,
   saveBestDailyResult,
@@ -76,18 +77,23 @@ api.post('/daily/guess', async (c) => {
       guesses: nextSession.guesses.length,
       solvedAt: nextSession.solvedAt,
     });
-  }
 
-  const leaderboard = await loadDailyLeaderboard(
-    nextSession.puzzleId.date,
-    user.userId
-  );
+    const leaderboard = await loadDailyLeaderboard(
+      nextSession.puzzleId.date,
+      user.userId
+    );
+
+    return c.json<DailySessionResponse>({
+      type: 'daily-session',
+      session: nextSession,
+      leaderboard: leaderboard.leaderboard,
+      playerRank: leaderboard.playerRank,
+    });
+  }
 
   return c.json<DailySessionResponse>({
     type: 'daily-session',
     session: nextSession,
-    leaderboard: leaderboard.leaderboard,
-    playerRank: leaderboard.playerRank,
   });
 });
 
@@ -143,6 +149,27 @@ api.get('/daily/leaderboard', async (c) => {
 
   return c.json<DailyLeaderboardResponse>({
     type: 'daily-leaderboard',
+    leaderboard: leaderboard.leaderboard,
+    playerRank: leaderboard.playerRank,
+  });
+});
+
+api.post('/daily/dev-reset', async (c) => {
+  const user = currentUser();
+  const puzzleId = createDailyPuzzleId(todayUtcDate());
+  await clearDailyPlayerData(puzzleId.date, user.userId);
+
+  const session = createInitialSession(
+    puzzleId,
+    dailyPatternForPuzzle(puzzleId).length
+  );
+  await saveDailySession(session, user.userId);
+
+  const leaderboard = await loadDailyLeaderboard(puzzleId.date, user.userId);
+
+  return c.json<DailySessionResponse>({
+    type: 'daily-session',
+    session,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
   });
