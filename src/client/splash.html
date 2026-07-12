@@ -7,18 +7,36 @@
       name="viewport"
       content="initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, width=device-width, height=device-height, user-scalable=0"
     />
-    <title>Pattern Tiles</title>
+    <title>Tile Wars</title>
   </head>
   <body class="app">
-    <div class="content">
-      <h1 class="title">Pattern Tiles</h1>
-      <p class="description">
-        Find today's linked shape from row, column, and diagonal clues.
-      </p>
-    </div>
-    <div>
-      <button class="start-button" id="start-button">Play</button>
-    </div>
+    <main class="menu-shell" aria-labelledby="game-title">
+      <div class="interactive-board" id="interactive-board"></div>
+
+      <section class="hero">
+        <h1 class="tile-title" id="game-title" aria-label="Tile Wars">
+          <span class="letter-tile tile-green">T</span>
+          <span class="letter-tile tile-red">I</span>
+          <span class="letter-tile tile-blue">L</span>
+          <span class="letter-tile tile-orange">E</span>
+          <span class="letter-tile tile-blue">W</span>
+          <span class="letter-tile tile-orange">A</span>
+          <span class="letter-tile tile-green">R</span>
+          <span class="letter-tile tile-red">S</span>
+        </h1>
+      </section>
+
+      <nav class="menu-actions" aria-label="Game modes">
+        <button class="mode-button primary" id="daily-button" type="button">
+          <span class="button-kicker">Play now</span>
+          <span class="button-label">Daily Challenge</span>
+        </button>
+        <button class="mode-button secondary" id="versus-button" type="button">
+          <span class="button-kicker">Versus</span>
+          <span class="button-label">1v1 Battle</span>
+        </button>
+      </nav>
+    </main>
     <script type="module" src="splash.ts" defer></script>
   </body>
 </html>

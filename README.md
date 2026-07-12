@@ -29,6 +29,23 @@ A daily Reddit game built with Devvit Web and Phaser. Players search a 5x5 board
 - `npm run build`: Build the Devvit client and server bundles.
 - `npm run login`: Log the Devvit CLI into Reddit.
 - `npm run dev`: Run Devvit playtest on Reddit.
+- `npm run init:personal -- --app your-devvit-app-name`: Create your own Devvit app using the ignored local config.
+- `npm run dev:personal -- --app your-devvit-app-name YourTestSubreddit`: Run playtest with an ignored local Devvit config so the committed app owner config is not changed.
+- `npm run upload:personal -- --app your-devvit-app-name`: Upload to your own Devvit app name without editing `devvit.json`.
+
+## Personal Devvit Testing
+
+The committed `devvit.json` uses the shared app name. To test your own changes without touching another owner's Devvit setup, use a personal app name:
+
+```sh
+npm run login
+npm run init:personal -- --app your-devvit-app-name
+npm run dev:personal -- --app your-devvit-app-name YourTestSubreddit
+```
+
+This generates `.devvit.local.json`, swaps only the Devvit `name`, and leaves the committed `devvit.json` unchanged. The generated file is git-ignored, so each developer can keep their own local app identity. `init:personal` passes Devvit's force flag against the local config only because the shared project is already initialized; you only need to run it once per personal Devvit app name.
+
+To preview the generated config and command without contacting Devvit, add `--dry-run`.
 
 ## Publishing
 

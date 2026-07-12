@@ -8,12 +8,15 @@
     "build": "vite build",
     "deploy": "npm run type-check && npm run lint && devvit upload",
     "dev": "devvit playtest",
+    "dev:personal": "node tools/devvit-personal.mjs playtest",
+    "init:personal": "node tools/devvit-personal.mjs init",
     "launch": "npm run deploy && devvit publish",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "login": "devvit login",
     "prettier": "prettier --write .",
     "test": "vitest run",
-    "type-check": "tsc --build"
+    "type-check": "tsc --build",
+    "upload:personal": "node tools/devvit-personal.mjs upload"
   },
   "engines": {
     "node": ">=22.2.0"
