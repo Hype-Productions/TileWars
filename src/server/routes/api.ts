@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
-import { context } from '@devvit/web/server';
+import { context, reddit } from '@devvit/web/server';
 import type {
+  DailyCommentResultResponse,
   DailyGuessRequest,
   DailyLeaderboardResponse,
   DailyMarkRequest,
@@ -12,6 +13,7 @@ import {
   applyGuessToSession,
   createDailyPuzzleId,
   createInitialSession,
+  createShareText,
   dailyPatternForPuzzle,
   setClueModeInSession,
   toggleMarkerInSession,
@@ -49,7 +51,8 @@ api.get('/daily/session', async (c) => {
   const puzzleId = createDailyPuzzleId(todayUtcDate());
   const existing = await loadDailySession(puzzleId.date, user.userId);
   const session =
-    existing ?? createInitialSession(puzzleId, dailyPatternForPuzzle(puzzleId).length);
+    existing ??
+    createInitialSession(puzzleId, dailyPatternForPuzzle(puzzleId).length);
 
   if (!existing) {
     await saveDailySession(session, user.userId);
@@ -181,6 +184,37 @@ api.get('/daily/leaderboard', async (c) => {
   });
 });
 
+api.post('/daily/comment-result', async (c) => {
+  const postId = context.postId;
+  if (!postId) {
+    return c.json(
+      { status: 'error', message: 'No Reddit post is available here.' },
+      400
+    );
+  }
+
+  const user = currentUser();
+  const session = await getOrCreateTodaySession(user.userId);
+  if (!session.solved) {
+    return c.json(
+      { status: 'error', message: 'Solve the daily before commenting.' },
+      400
+    );
+  }
+
+  const comment = await reddit.submitComment({
+    id: postId,
+    text: createShareText(session),
+    runAs: 'USER',
+  });
+
+  return c.json<DailyCommentResultResponse>({
+    type: 'daily-comment-result',
+    status: 'posted',
+    commentId: comment.id,
+  });
+});
+
 api.post('/daily/dev-reset', async (c) => {
   const user = currentUser();
   const puzzleId = createDailyPuzzleId(todayUtcDate());
@@ -229,7 +263,9 @@ const currentUser = (): { userId: string; displayName: string } => {
   };
 };
 
-const isValidCoord = (coord: unknown): coord is { row: number; col: number } => {
+const isValidCoord = (
+  coord: unknown
+): coord is { row: number; col: number } => {
   if (typeof coord !== 'object' || coord === null) {
     return false;
   }

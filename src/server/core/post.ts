@@ -3,7 +3,7 @@ import { EntrypointHeight } from '@devvit/reddit';
 
 export const createPost = async () => {
   return await reddit.submitCustomPost({
-    title: 'Daily Pattern Tiles',
+    title: 'Daily Tile Wars',
     entry: 'default',
     styles: {
       backgroundColor: '#F6F0E8FF',

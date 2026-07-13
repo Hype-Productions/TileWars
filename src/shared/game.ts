@@ -92,7 +92,9 @@ export type DailyLeaderboardResponse = {
 export const DAILY_SEED = 'pattern';
 export const DAILY_LAUNCH_DATE = '2026-07-07';
 
-export const createDailyPuzzleId = (date: string = todayUtcDate()): PuzzleId => {
+export const createDailyPuzzleId = (
+  date: string = todayUtcDate()
+): PuzzleId => {
   return {
     mode: 'daily',
     date,
@@ -150,7 +152,9 @@ export const applyGuessToSession = (
   const foundKeys = clue.green
     ? uniqueStrings([...session.foundKeys, key])
     : session.foundKeys;
-  const markerKeys = session.markerKeys.filter((markerKey) => markerKey !== key);
+  const markerKeys = session.markerKeys.filter(
+    (markerKey) => markerKey !== key
+  );
   const guesses = [
     ...session.guesses,
     {
@@ -204,9 +208,7 @@ export const setClueModeInSession = (
 
 export const createShareText = (session: PlayerSession): string => {
   const title =
-    session.puzzleId.mode === 'daily'
-      ? `Pattern Tiles #${session.puzzleId.puzzleNumber}`
-      : 'Pattern Tiles';
+    session.puzzleId.mode === 'daily' ? 'Tile Wars Daily' : 'Tile Wars';
   const result = session.solved
     ? `Solved in ${session.guesses.length} guesses`
     : `${session.foundKeys.length} found in ${session.guesses.length} guesses`;

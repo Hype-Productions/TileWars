@@ -4,6 +4,12 @@ export type DailyResponse = {
   seed: string;
 };
 
+export type DailyCommentResultResponse = {
+  type: 'daily-comment-result';
+  status: 'posted';
+  commentId: string;
+};
+
 export type {
   DailyGuessRequest,
   DailyLeaderboardResponse,

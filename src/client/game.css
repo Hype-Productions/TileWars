@@ -2,7 +2,28 @@ body {
   margin: 0;
   padding: 0;
   color: #18212b;
-  background-color: #f6f0e8;
+  background:
+    radial-gradient(
+      circle at 12% 15%,
+      rgba(53, 208, 127, 0.78),
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at 88% 13%,
+      rgba(255, 83, 101, 0.62),
+      transparent 26%
+    ),
+    radial-gradient(
+      circle at 84% 88%,
+      rgba(51, 157, 255, 0.7),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 14% 88%,
+      rgba(255, 177, 45, 0.68),
+      transparent 26%
+    ),
+    linear-gradient(135deg, #fff1b8 0%, #ffc7e7 34%, #c8f4ff 70%, #d5ffc7 100%);
   font-family: Arial, sans-serif;
 }
 

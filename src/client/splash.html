@@ -11,6 +11,14 @@
   </head>
   <body class="app">
     <main class="menu-shell" aria-labelledby="game-title">
+      <div class="spark-field" aria-hidden="true">
+        <span class="spark spark-one"></span>
+        <span class="spark spark-two"></span>
+        <span class="spark spark-three"></span>
+        <span class="spark spark-four"></span>
+        <span class="spark spark-five"></span>
+        <span class="spark spark-six"></span>
+      </div>
       <div class="interactive-board" id="interactive-board"></div>
 
       <section class="hero">
@@ -36,6 +44,45 @@
           <span class="button-label">1v1 Battle</span>
         </button>
       </nav>
+
+      <div
+        class="dialog-backdrop"
+        id="leaderboard-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="leaderboard-title"
+        hidden
+      >
+        <section class="leaderboard-panel">
+          <button
+            class="dialog-close"
+            id="leaderboard-close"
+            type="button"
+            aria-label="Close leaderboard"
+          >
+            x
+          </button>
+          <p class="panel-kicker">Rankings</p>
+          <h2 id="leaderboard-title">Daily Leaders</h2>
+          <ol class="leaderboard-list" aria-label="Preview leaderboard">
+            <li>
+              <span class="rank">1</span>
+              <span class="player">Fast finder</span>
+              <span class="score">6 guesses</span>
+            </li>
+            <li>
+              <span class="rank">2</span>
+              <span class="player">Pattern pro</span>
+              <span class="score">8 guesses</span>
+            </li>
+            <li>
+              <span class="rank">3</span>
+              <span class="player">Tile scout</span>
+              <span class="score">9 guesses</span>
+            </li>
+          </ol>
+        </section>
+      </div>
     </main>
     <script type="module" src="splash.ts" defer></script>
   </body>
