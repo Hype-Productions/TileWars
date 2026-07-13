@@ -1,28 +1,28 @@
 import { GameObjects, Scene } from 'phaser';
-import { coordKey, getWeightedColors } from '../../shared/pattern';
+import { coordKey } from '../../shared/pattern';
 import type {
   VersusMatchSummary,
   VersusReplayGuess,
   VersusScore,
 } from '../../shared/versus';
 import type { PlayerProgressSummary } from '../../shared/progression';
+import {
+  TILE_WARS_COLORS,
+  drawRaisedPanel,
+  drawTileHeading,
+  drawTileWarsBackdrop,
+} from './tileWarsTheme';
 
 type ResultSceneData = {
   match: VersusMatchSummary;
   progress?: PlayerProgressSummary;
 };
 type ColorName = 'red' | 'blue' | 'orange';
+type ButtonVariant = 'dark' | 'green' | 'orange';
 
 const TEXT_RESOLUTION =
   typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
-const COLORS: Record<ColorName | 'green' | 'base' | 'line', number> = {
-  base: 0xf8f1e8,
-  line: 0x25313b,
-  green: 0x43c978,
-  red: 0xef5350,
-  blue: 0x3f8cff,
-  orange: 0xffa323,
-};
+const COLORS = TILE_WARS_COLORS;
 
 export class VersusResult extends Scene {
   private match: VersusMatchSummary | null = null;
@@ -47,6 +47,7 @@ export class VersusResult extends Scene {
   }
 
   private render(): void {
+    this.tweens.killAll();
     this.children.removeAll(true);
     this.input.resetCursor();
     if (!this.match) {
@@ -57,23 +58,17 @@ export class VersusResult extends Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     const mobile = width < 700;
-    this.add
-      .text(width / 2, 30, 'Match result', {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: mobile ? '26px' : '32px',
-        color: '#18212b',
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5);
+    drawTileWarsBackdrop(this, width, height);
+    drawTileHeading(this, 'Result', width / 2, 34, mobile);
     this.add
       .text(
         width / 2,
-        66,
+        78,
         `You ${this.match.rivalry.wins} - ${this.match.rivalry.losses} ${this.match.opponentDisplayName}${this.match.rivalry.draws ? `  (${this.match.rivalry.draws} draw${this.match.rivalry.draws === 1 ? '' : 's'})` : ''}`,
         {
           fontFamily: 'Arial Black, Arial, sans-serif',
           fontSize: mobile ? '14px' : '16px',
-          color: '#d9480f',
+          color: '#f28d13',
         }
       )
       .setOrigin(0.5);
@@ -82,20 +77,20 @@ export class VersusResult extends Scene {
       this.add
         .text(
           width / 2,
-          91,
+          103,
           this.match.outcome === 'draw' ? 'DRAW' : 'NO CONTEST',
           {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: '18px',
-            color: '#d9480f',
+            color: '#f28d13',
           }
         )
         .setOrigin(0.5);
     }
 
     const panelWidth = mobile ? Math.min(width - 30, 390) : Math.min(360, width * 0.4);
-    const panelHeight = mobile ? 210 : 330;
-    const firstY = mobile ? 108 : 104;
+    const panelHeight = mobile ? 204 : 326;
+    const firstY = mobile ? 122 : 112;
     const myX = mobile ? width / 2 : width / 2 - panelWidth / 2 - 15;
     const opponentX = mobile ? width / 2 : width / 2 + panelWidth / 2 + 15;
     this.drawPlayerPanel(
@@ -114,7 +109,7 @@ export class VersusResult extends Scene {
       .text(width / 2, progressY, `+${this.match.xpEarned} XP`, {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: '20px',
-        color: this.match.xpEarned > 0 ? '#218c4a' : '#6b7280',
+        color: this.match.xpEarned > 0 ? '#16a66a' : '#6b7280',
       })
       .setOrigin(0.5);
     if (this.progress) {
@@ -132,12 +127,23 @@ export class VersusResult extends Scene {
     );
 
     const buttonsY = height - 32;
-    this.createButton(width / 2 - 92, buttonsY, 'Lobby', () => {
-      this.scene.start('VersusLobby');
-    });
-    this.createButton(width / 2 + 92, buttonsY, 'Rematch', () => {
-      this.scene.start('VersusLobby', { rematchMatchId: this.match?.matchId });
-    });
+    this.createButton(
+      width / 2 - 92,
+      buttonsY,
+      'Lobby',
+      () => this.scene.start('VersusLobby'),
+      'orange'
+    );
+    this.createButton(
+      width / 2 + 92,
+      buttonsY,
+      'Rematch',
+      () =>
+        this.scene.start('VersusLobby', {
+          rematchMatchId: this.match?.matchId,
+        }),
+      'green'
+    );
   }
 
   private drawProgressBar(y: number): void {
@@ -153,7 +159,7 @@ export class VersusResult extends Scene {
     const graphics = this.add.graphics();
     graphics.fillStyle(0xd8d0c5, 1);
     graphics.fillRoundedRect(x, y, width, 12, 6);
-    graphics.fillStyle(0x43c978, 1);
+    graphics.fillStyle(COLORS.green, 1);
     graphics.fillRoundedRect(x, y, width * ratio, 12, 6);
     this.add
       .text(
@@ -180,11 +186,24 @@ export class VersusResult extends Scene {
     winner: boolean
   ): void {
     const x = centerX - width / 2;
-    const graphics = this.add.graphics();
-    graphics.fillStyle(0xffffff, 1);
-    graphics.fillRoundedRect(x, y, width, height, 8);
-    graphics.lineStyle(winner ? 4 : 2, winner ? COLORS.green : COLORS.line, 1);
-    graphics.strokeRoundedRect(x, y, width, height, 8);
+    const graphics = drawRaisedPanel(
+      this,
+      x,
+      y,
+      width,
+      height,
+      winner ? COLORS.green : COLORS.line,
+      COLORS.panel
+    );
+    graphics.setAlpha(0);
+    this.tweens.add({
+      targets: graphics,
+      alpha: 1,
+      y: { from: 8, to: 0 },
+      duration: 280,
+      delay: winner ? 70 : 130,
+      ease: 'Back.easeOut',
+    });
 
     if (winner) {
       this.add
@@ -192,7 +211,7 @@ export class VersusResult extends Scene {
           fontFamily: 'Arial Black, Arial, sans-serif',
           fontSize: '16px',
           color: '#ffffff',
-          backgroundColor: '#218c4a',
+          backgroundColor: '#16a66a',
           padding: { left: 10, right: 10, top: 4, bottom: 4 },
         })
         .setOrigin(0.5);
@@ -201,8 +220,10 @@ export class VersusResult extends Scene {
     this.add
       .text(centerX, y + 24, name, {
         fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '18px',
+        fontSize: width < 320 ? '16px' : '18px',
         color: '#18212b',
+        align: 'center',
+        wordWrap: { width: width - 24 },
       })
       .setOrigin(0.5);
     this.add
@@ -238,32 +259,30 @@ export class VersusResult extends Scene {
         const cellX = x + col * cell;
         const cellY = y + row * cell;
         const graphics = this.add.graphics();
+        const tileX = cellX + 2;
+        const tileY = cellY + 2;
+        const tileSize = cell - 4;
+        const radius = Math.max(3, cell * 0.1);
+        graphics.fillStyle(COLORS.shadow, 0.14);
+        graphics.fillRoundedRect(tileX + 2, tileY + 3, tileSize, tileSize, radius);
         if (guess?.clue.green) {
           graphics.fillStyle(COLORS.green, 1);
-          graphics.fillRect(cellX + 2, cellY + 2, cell - 4, cell - 4);
+          graphics.fillRoundedRect(tileX, tileY, tileSize, tileSize, radius);
         } else if (guess) {
-          const weights = getWeightedColors(guess.clue, 'balanced');
-          if (weights.length === 0) {
-            graphics.fillStyle(0xffffff, 1);
-            graphics.fillRect(cellX + 2, cellY + 2, cell - 4, cell - 4);
-          } else {
-            const slice = (cell - 4) / weights.length;
-            weights.forEach((weight, index) => {
-              graphics.fillStyle(COLORS[weight.color], 1);
-              graphics.fillRect(
-                cellX + 2 + index * slice,
-                cellY + 2,
-                slice,
-                cell - 4
-              );
-            });
-          }
+          this.drawReplayClue(
+            graphics,
+            tileX,
+            tileY,
+            tileSize,
+            radius,
+            guess
+          );
         } else {
-          graphics.fillStyle(COLORS.base, 1);
-          graphics.fillRect(cellX + 2, cellY + 2, cell - 4, cell - 4);
+          graphics.fillStyle(COLORS.paper, 1);
+          graphics.fillRoundedRect(tileX, tileY, tileSize, tileSize, radius);
         }
         graphics.lineStyle(1, COLORS.line, 0.8);
-        graphics.strokeRect(cellX + 2, cellY + 2, cell - 4, cell - 4);
+        graphics.strokeRoundedRect(tileX, tileY, tileSize, tileSize, radius);
 
         if (guess) {
           this.add
@@ -278,30 +297,89 @@ export class VersusResult extends Scene {
     }
   }
 
+  private drawReplayClue(
+    graphics: GameObjects.Graphics,
+    x: number,
+    y: number,
+    size: number,
+    radius: number,
+    guess: VersusReplayGuess
+  ): void {
+    const colors: ColorName[] = [];
+    if (guess.clue.red > 0) colors.push('red');
+    if (guess.clue.blue > 0) colors.push('blue');
+    if (guess.clue.orange > 0) colors.push('orange');
+
+    if (colors.length === 0) {
+      graphics.fillStyle(COLORS.paper, 1);
+      graphics.fillRoundedRect(x, y, size, size, radius);
+      return;
+    }
+
+    graphics.fillStyle(COLORS[colors[0] ?? 'red'], 1);
+    graphics.fillRoundedRect(x, y, size, size, radius);
+    const segmentSize = size / colors.length;
+    for (let index = 1; index < colors.length; index += 1) {
+      const segmentX = x + segmentSize * index;
+      const remainingWidth = size - segmentSize * index;
+      graphics.fillStyle(COLORS[colors[index] ?? 'red'], 1);
+      if (index === colors.length - 1) {
+        graphics.fillRoundedRect(segmentX, y, remainingWidth, size, radius);
+        graphics.fillRect(segmentX, y, Math.min(radius, remainingWidth), size);
+      } else {
+        graphics.fillRect(segmentX, y, segmentSize, size);
+      }
+    }
+  }
+
   private createButton(
     x: number,
     y: number,
     label: string,
-    onClick: () => void
+    onClick: () => void,
+    variant: ButtonVariant = 'dark'
   ): GameObjects.Text {
+    const base =
+      variant === 'green'
+        ? '#16a66a'
+        : variant === 'orange'
+          ? '#f28d13'
+          : '#25313b';
+    const hover =
+      variant === 'green'
+        ? '#27bf7d'
+        : variant === 'orange'
+          ? '#ffad2d'
+          : '#354555';
     const button = this.add
       .text(x, y, label, {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: '14px',
         color: '#ffffff',
-        backgroundColor: '#25313b',
+        backgroundColor: base,
         padding: { left: 12, right: 12, top: 7, bottom: 7 },
         resolution: TEXT_RESOLUTION,
       })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true });
     button.on('pointerover', () => {
-      button.setStyle({ backgroundColor: '#354555' });
+      button.setStyle({ backgroundColor: hover });
+      this.tweens.add({ targets: button, y: y - 2, duration: 90 });
     });
     button.on('pointerout', () => {
-      button.setStyle({ backgroundColor: '#25313b' });
+      button.setStyle({ backgroundColor: base });
+      this.tweens.add({ targets: button, y, duration: 90 });
     });
-    button.on('pointerdown', onClick);
+    button.on('pointerdown', () => {
+      this.tweens.add({
+        targets: button,
+        scaleX: 0.94,
+        scaleY: 0.94,
+        yoyo: true,
+        duration: 80,
+      });
+      onClick();
+    });
     return button;
   }
 }

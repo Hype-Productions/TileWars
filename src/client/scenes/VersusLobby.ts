@@ -6,10 +6,9 @@ import {
   Time,
   Types,
 } from 'phaser';
-import { showShareSheet } from '@devvit/web/client';
-import { exitExpandedMode } from '@devvit/web/client';
+import { exitExpandedMode, showShareSheet } from '@devvit/web/client';
 import type { Coord } from '../../shared/pattern';
-import { coordKey, coordLabel } from '../../shared/pattern';
+import { coordKey } from '../../shared/pattern';
 import type {
   VersusInviteSummary,
   VersusLobbyResponse,
@@ -47,6 +46,12 @@ import {
   updateRematchRequest,
   VersusClientError,
 } from '../versusClient';
+import {
+  TILE_WARS_COLORS,
+  drawRaisedPanel,
+  drawTileHeading,
+  drawTileWarsBackdrop,
+} from './tileWarsTheme';
 
 type PickerMode =
   | 'public'
@@ -61,20 +66,15 @@ type LobbySceneData = {
   inviteId?: string;
 };
 
-const TEXT_RESOLUTION =
-  typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
-
 const COLORS = {
-  background: 0xf6f0e8,
-  tile: 0xf8f1e8,
-  selected: 0x43c978,
-  line: 0x25313b,
-  panel: 0xffffff,
-  action: 0x4f7cff,
-  playable: 0x35a866,
-  waiting: 0xd88924,
-  looking: 0x8357c5,
-  results: 0x7b8490,
+  ...TILE_WARS_COLORS,
+  tile: TILE_WARS_COLORS.paper,
+  selected: TILE_WARS_COLORS.green,
+  action: TILE_WARS_COLORS.blue,
+  playable: TILE_WARS_COLORS.green,
+  waiting: TILE_WARS_COLORS.orange,
+  looking: TILE_WARS_COLORS.red,
+  results: TILE_WARS_COLORS.blue,
 };
 
 export class VersusLobby extends Scene {
@@ -210,18 +210,24 @@ export class VersusLobby extends Scene {
 
   private render(): void {
     this.hideCodeInput();
+    this.tweens.killAll();
     this.children.removeAll(true);
     this.input.resetCursor();
     const width = this.scale.width;
-    this.add
-      .text(width / 2, 30, 'Versus', {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: width < 700 ? '28px' : '34px',
-        color: '#18212b',
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5);
-    this.createButton(58, 30, 'Back', (pointer) => this.goBack(pointer));
+    const mobile = width < 700;
+    drawTileWarsBackdrop(
+      this,
+      width,
+      Math.max(this.scale.height, this.contentHeight)
+    );
+    drawTileHeading(this, 'Versus', width / 2, 34, mobile);
+    this.createButton(
+      52,
+      34,
+      'Back',
+      (pointer) => this.goBack(pointer),
+      'orange'
+    );
 
     if (!this.lobby) {
       this.drawCenteredMessage(this.status);
@@ -288,36 +294,38 @@ export class VersusLobby extends Scene {
     }
     const width = this.scale.width;
     const progress = this.lobby.progress;
-    this.add.text(20, 70, `Level ${progress.level}`, this.headerStyle()).setOrigin(0, 0.5);
+    drawRaisedPanel(this, 14, 68, width - 28, 56, COLORS.green);
+    this.add.text(28, 86, `Level ${progress.level}`, this.headerStyle()).setOrigin(0, 0.5);
     this.add
-      .text(width - 20, 70, `${progress.dailyStreak} day streak`, this.headerStyle('#d9480f'))
+      .text(width - 28, 86, `${progress.dailyStreak} day streak`, this.headerStyle('#16a66a'))
       .setOrigin(1, 0.5);
     this.add
       .text(
         width / 2,
-        98,
+        108,
         `${progress.versus.wins}W  ${progress.versus.losses}L  ${progress.versus.draws}D`,
         { fontFamily: 'Arial, sans-serif', fontSize: '14px', color: '#33404c' }
       )
       .setOrigin(0.5);
 
     const searching = this.lobby.round?.status === 'matching';
-    this.createButton(width / 2 - 150, 132, searching ? 'Cancel Search' : 'Find Match', () => {
+    const actionSpread = Math.min(150, Math.max(108, width * 0.29));
+    this.createButton(width / 2 - actionSpread, 154, searching ? 'Cancel Search' : 'Find Match', () => {
       if (searching) {
         void this.closeRound();
       } else {
         this.openPicker('public');
       }
-    });
-    this.createButton(width / 2, 132, 'Invite', () => this.openPicker('invite-create'));
-    this.createButton(width / 2 + 150, 132, 'Enter Code', () => {
+    }, searching ? 'decline' : 'blue');
+    this.createButton(width / 2, 154, 'Invite', () => this.openPicker('invite-create'), 'accept');
+    this.createButton(width / 2 + actionSpread, 154, 'Enter Code', () => {
       this.codeEntryVisible = true;
       this.inviteCode = '';
       this.render();
-    });
+    }, 'orange');
 
     const sections = organizeVersusLobby(this.lobby);
-    let y = 174;
+    let y = 198;
     y = this.drawPendingSection('Action Needed', COLORS.action, sections.actionItems, y);
     y = this.drawMatchSection('Your Matches', COLORS.playable, sections.playableMatches, y);
     y = this.drawMixedWaitingSection(
@@ -448,7 +456,7 @@ export class VersusLobby extends Scene {
         width - 28,
         y + 21,
         `${opponent.wins}-${opponent.losses}${opponent.draws ? ` · ${opponent.draws}D` : ''}`,
-        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#d9480f' }
+        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#f28d13' }
       )
       .setOrigin(1, 0.5);
     this.add.text(30, y + 56, 'History', this.cardBodyStyle()).setOrigin(0, 0.5);
@@ -464,10 +472,16 @@ export class VersusLobby extends Scene {
     outcomes.slice(-5).forEach((outcome, index) => {
       const graphics = this.add.graphics();
       graphics.fillStyle(
-        outcome === 'win' ? 0x218c4a : outcome === 'loss' ? 0xc83d3d : 0x7b8490,
+        outcome === 'win'
+          ? COLORS.green
+          : outcome === 'loss'
+            ? COLORS.red
+            : COLORS.orange,
         1
       );
-      graphics.fillCircle(x + index * 20, y, 6);
+      graphics.fillRoundedRect(x + index * 20 - 7, y - 7, 14, 14, 4);
+      graphics.lineStyle(1, COLORS.line, 0.55);
+      graphics.strokeRoundedRect(x + index * 20 - 7, y - 7, 14, 14, 4);
     });
   }
 
@@ -496,7 +510,7 @@ export class VersusLobby extends Scene {
         width - 28,
         y + 20,
         `${match.rivalry.wins}-${match.rivalry.losses}${match.rivalry.draws ? ` · ${match.rivalry.draws}D` : ''}`,
-        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '13px', color: '#d9480f' }
+        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '13px', color: '#f28d13' }
       )
       .setOrigin(1, 0.5);
     this.add
@@ -602,11 +616,18 @@ export class VersusLobby extends Scene {
   }
 
   private drawCardPanel(color: number, y: number, height: number): void {
-    const graphics = this.add.graphics();
-    graphics.fillStyle(COLORS.panel, 1);
-    graphics.fillRoundedRect(14, y, this.scale.width - 28, height, 9);
-    graphics.lineStyle(3, color, 0.95);
-    graphics.strokeRoundedRect(14, y, this.scale.width - 28, height, 9);
+    drawRaisedPanel(
+      this,
+      14,
+      y,
+      this.scale.width - 28,
+      height,
+      color,
+      COLORS.panel
+    );
+    const accent = this.add.graphics();
+    accent.fillStyle(color, 1);
+    accent.fillRoundedRect(14, y, 9, height, 4);
   }
 
   private drawPatternPicker(): void {
@@ -625,9 +646,9 @@ export class VersusLobby extends Scene {
     const size = Math.min(width - 34, height - 220, 370);
     const cell = size / 5;
     const startX = (width - size) / 2;
-    const startY = 106;
+    const startY = 126;
     this.add
-      .text(width / 2, 72, `${title} (${VERSUS_PATTERN_SIZE} connected tiles)`, {
+      .text(width / 2, 82, `${title} (${VERSUS_PATTERN_SIZE} connected tiles)`, {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: width < 700 ? '16px' : '19px',
         color: '#18212b',
@@ -643,12 +664,14 @@ export class VersusLobby extends Scene {
         const y = startY + row * cell;
         const selected = this.selectedKeys.has(key);
         const graphics = this.add.graphics();
+        graphics.fillStyle(COLORS.shadow, 0.14);
+        graphics.fillRoundedRect(x + 6, y + 8, cell - 8, cell - 8, 6);
         graphics.fillStyle(selected ? COLORS.selected : COLORS.tile, 1);
         graphics.fillRoundedRect(x + 3, y + 3, cell - 6, cell - 6, 6);
         graphics.lineStyle(2, COLORS.line, 1);
         graphics.strokeRoundedRect(x + 3, y + 3, cell - 6, cell - 6, 6);
         this.add
-          .text(x + cell / 2, y + cell / 2, coordLabel(coord), {
+          .text(x + cell / 2, y + cell / 2, '', {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: `${Math.max(12, Math.floor(cell * 0.2))}px`,
             color: '#18212b',
@@ -720,7 +743,7 @@ export class VersusLobby extends Scene {
       .text(this.scale.width / 2, modal.y + 42, 'Enter invite code', this.modalTitleStyle())
       .setOrigin(0.5);
     const graphics = this.add.graphics();
-    graphics.fillStyle(0xffffff, 1);
+    graphics.fillStyle(COLORS.paper, 1);
     graphics.fillRoundedRect(modal.x + 28, modal.y + 82, modal.width - 56, 54, 8);
     graphics.lineStyle(2, COLORS.line, 1);
     graphics.strokeRoundedRect(modal.x + 28, modal.y + 82, modal.width - 56, 54, 8);
@@ -742,7 +765,7 @@ export class VersusLobby extends Scene {
       .text(this.scale.width / 2, modal.y + 36, 'Find an opponent', this.modalTitleStyle())
       .setOrigin(0.5);
     const graphics = this.add.graphics();
-    graphics.fillStyle(0xffffff, 1);
+    graphics.fillStyle(COLORS.paper, 1);
     graphics.fillRoundedRect(modal.x + 24, modal.y + 67, modal.width - 48, 46, 8);
     graphics.lineStyle(2, COLORS.line, 1);
     graphics.strokeRoundedRect(modal.x + 24, modal.y + 67, modal.width - 48, 46, 8);
@@ -762,7 +785,7 @@ export class VersusLobby extends Scene {
     results.forEach((opponent, index) => {
       const rowY = modal.y + 142 + index * 57;
       const row = this.add.graphics();
-      row.fillStyle(0xffffff, 0.85);
+      row.fillStyle(COLORS.paper, 0.92);
       row.fillRoundedRect(modal.x + 24, rowY, modal.width - 48, 48, 7);
       this.add
         .text(modal.x + 36, rowY + 15, opponent.opponentDisplayName, {
@@ -800,7 +823,7 @@ export class VersusLobby extends Scene {
         this.scale.width / 2,
         modal.y + 63,
         `You ${opponent.wins} - ${opponent.losses}${opponent.draws ? ` · ${opponent.draws} draws` : ''}`,
-        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#d9480f' }
+        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#f28d13' }
       )
       .setOrigin(0.5);
     this.drawOutcomeDots(this.scale.width / 2 - 40, modal.y + 91, opponent.recentOutcomes);
@@ -847,7 +870,7 @@ export class VersusLobby extends Scene {
     entry: RivalryHistoryEntry
   ): void {
     const graphics = this.add.graphics();
-    graphics.fillStyle(0xffffff, 0.85);
+    graphics.fillStyle(COLORS.paper, 0.92);
     graphics.fillRoundedRect(x, y, width, 48, 7);
     const color = entry.outcome === 'win' ? '#218c4a' : entry.outcome === 'loss' ? '#c83d3d' : '#7b8490';
     this.add
@@ -888,11 +911,7 @@ export class VersusLobby extends Scene {
     const overlay = this.add.graphics();
     overlay.fillStyle(0x111820, 0.5);
     overlay.fillRect(0, this.cameras.main.scrollY, this.scale.width, this.scale.height);
-    const panel = this.add.graphics();
-    panel.fillStyle(0xf8f1e8, 1);
-    panel.fillRoundedRect(x, y, width, height, 10);
-    panel.lineStyle(2, COLORS.line, 1);
-    panel.strokeRoundedRect(x, y, width, height, 10);
+    drawRaisedPanel(this, x, y, width, height, COLORS.line, COLORS.panel);
     return { x, y, width };
   }
 
@@ -1373,28 +1392,57 @@ export class VersusLobby extends Scene {
     y: number,
     label: string,
     onClick: (pointer: Input.Pointer) => void,
-    variant: 'neutral' | 'accept' | 'decline' = 'neutral'
+    variant: 'neutral' | 'accept' | 'decline' | 'blue' | 'orange' = 'neutral'
   ): void {
     const width = Math.max(78, Math.min(126, label.length * 7 + 28));
     const backgroundColor =
       variant === 'accept'
-        ? 0x218c4a
+        ? COLORS.green
         : variant === 'decline'
-          ? 0xc83d3d
-          : COLORS.line;
+          ? COLORS.red
+          : variant === 'blue'
+            ? COLORS.blue
+            : variant === 'orange'
+              ? COLORS.orange
+              : COLORS.line;
+    const hoverColor =
+      variant === 'accept'
+        ? 0x27bf7d
+        : variant === 'decline'
+          ? 0xff6878
+          : variant === 'blue'
+            ? 0x5bb4ff
+            : variant === 'orange'
+              ? 0xffc45c
+              : 0x354555;
     const graphics = this.add.graphics();
-    graphics.fillStyle(backgroundColor, 1);
-    graphics.fillRoundedRect(x - width / 2, y - 16, width, 32, 7);
-    this.add
+    const buttonLabel = this.add
       .text(x, y, label, {
         fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '12px', color: '#ffffff',
       })
       .setOrigin(0.5);
+    const drawButton = (color: number, offset: number): void => {
+      graphics.clear();
+      graphics.fillStyle(COLORS.shadow, 0.2);
+      graphics.fillRoundedRect(x - width / 2 + 3, y - 13 + 5, width, 32, 7);
+      graphics.fillStyle(color, 1);
+      graphics.fillRoundedRect(x - width / 2, y - 16 + offset, width, 32, 7);
+      graphics.lineStyle(2, COLORS.line, 0.75);
+      graphics.strokeRoundedRect(x - width / 2, y - 16 + offset, width, 32, 7);
+      buttonLabel.setY(y + offset);
+    };
+    drawButton(backgroundColor, 0);
     this.add
       .zone(x - width / 2, y - 16, width, 32)
       .setOrigin(0)
       .setInteractive({ useHandCursor: true })
-      .on('pointerup', (pointer: Input.Pointer) => onClick(pointer));
+      .on('pointerover', () => drawButton(hoverColor, -2))
+      .on('pointerout', () => drawButton(backgroundColor, 0))
+      .on('pointerdown', () => drawButton(backgroundColor, 3))
+      .on('pointerup', (pointer: Input.Pointer) => {
+        drawButton(hoverColor, -2);
+        onClick(pointer);
+      });
   }
 
   private drawCenteredMessage(message: string): void {
