@@ -1,4 +1,5 @@
-import { GameObjects, Scene } from 'phaser';
+import { GameObjects, Input, Scene } from 'phaser';
+import { exitExpandedMode } from '@devvit/web/client';
 import {
   type Coord,
   coordKey,
@@ -98,6 +99,12 @@ export class PatternGame extends Scene {
     const sharedInviteId: unknown = this.registry.get('sharedInviteId');
     if (typeof sharedInviteId === 'string') {
       this.scene.start('VersusLobby', { inviteId: sharedInviteId });
+      return;
+    }
+    const startMode: unknown = this.registry.get('startMode');
+    this.registry.remove('startMode');
+    if (startMode === 'versus') {
+      this.scene.start('VersusLobby');
       return;
     }
     this.cameras.main.setBackgroundColor(0xf6f0e8);
@@ -505,8 +512,8 @@ export class PatternGame extends Scene {
         width / 2 - 118,
         y,
         'Home',
-        () => {
-          this.openHomeScreen();
+        (pointer) => {
+          this.openHomeScreen(pointer);
         },
         'orange'
       );
@@ -541,8 +548,8 @@ export class PatternGame extends Scene {
       width / 2 - 158,
       y,
       'Home',
-      () => {
-        this.openHomeScreen();
+      (pointer) => {
+        this.openHomeScreen(pointer);
       },
       'orange'
     );
@@ -1021,7 +1028,7 @@ export class PatternGame extends Scene {
     x: number,
     y: number,
     label: string,
-    onClick: () => void,
+    onClick: (pointer: Input.Pointer) => void,
     variant: ButtonVariant = 'dark'
   ): GameObjects.Text {
     const backgroundColor = this.buttonColor(variant);
@@ -1056,7 +1063,7 @@ export class PatternGame extends Scene {
         ease: 'Sine.easeOut',
       });
     });
-    button.on('pointerdown', () => {
+    button.on('pointerdown', (pointer: Input.Pointer) => {
       this.tweens.add({
         targets: button,
         scaleX: 0.94,
@@ -1065,7 +1072,7 @@ export class PatternGame extends Scene {
         duration: 80,
         ease: 'Sine.easeInOut',
       });
-      onClick();
+      onClick(pointer);
     });
     this.trackInteractive(button);
     return button;
@@ -1095,11 +1102,20 @@ export class PatternGame extends Scene {
     return colors[variant];
   }
 
-  private openHomeScreen(): void {
+  private openHomeScreen(pointer: Input.Pointer): void {
+    try {
+      if (pointer.event instanceof MouseEvent) {
+        exitExpandedMode(pointer.event);
+        return;
+      }
+    } catch {
+      // Static previews do not provide Reddit's Devvit bridge.
+    }
+
     try {
       window.open('splash.html', '_self');
     } catch {
-      // Static previews and embedded contexts may block same-frame navigation.
+      // Some embedded contexts may block same-frame navigation.
     }
   }
 

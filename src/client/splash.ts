@@ -1,11 +1,19 @@
-import { requestExpandedMode } from '@devvit/web/client';
+import { navigateTo, requestExpandedMode } from '@devvit/web/client';
+import type {
+  DailyLeaderboardResponse,
+  LeaderboardEntry,
+} from '../shared/game';
+import type { PlayerProgressSummary } from '../shared/progression';
 
 const dailyButton = document.getElementById('daily-button');
 const versusButton = document.getElementById('versus-button');
 const leaderboardDialog = document.getElementById('leaderboard-dialog');
 const leaderboardClose = document.getElementById('leaderboard-close');
+const leaderboardList = document.getElementById('leaderboard-list');
 const interactiveBoard = document.getElementById('interactive-board');
 const subredditUrl = 'https://www.reddit.com/r/TileFinder/';
+const dailyKicker = dailyButton?.querySelector('.button-kicker');
+const versusKicker = versusButton?.querySelector('.button-kicker');
 
 const tileColors = [
   'tile-cream',
@@ -26,17 +34,29 @@ type TileColor = (typeof tileColors)[number];
 type BoardCoord = readonly [number, number];
 type BoardAction = 'join' | 'leaderboard';
 
-const openExpandedGame = (event: MouseEvent): void => {
+type GameEntrypoint = 'game' | 'versus';
+
+const openExpandedGame = (
+  event: MouseEvent,
+  entrypoint: GameEntrypoint
+): void => {
   try {
-    requestExpandedMode(event, 'game');
+    requestExpandedMode(event, entrypoint);
+    return;
   } catch {
     // Static previews do not provide Reddit's Devvit bridge.
+  }
+
+  try {
+    window.open(entrypoint === 'versus' ? 'versus.html' : 'game.html', '_self');
+  } catch {
+    // Some embedded previews may block same-frame navigation.
   }
 };
 
 if (dailyButton instanceof HTMLButtonElement) {
   dailyButton.addEventListener('click', (event) => {
-    openExpandedGame(event);
+    openExpandedGame(event, 'game');
   });
 }
 
@@ -44,7 +64,7 @@ if (versusButton instanceof HTMLButtonElement) {
   versusButton.addEventListener('click', (event) => {
     versusButton.classList.add('pulse');
     window.setTimeout(() => versusButton.classList.remove('pulse'), 420);
-    openExpandedGame(event);
+    openExpandedGame(event, 'versus');
   });
 }
 
@@ -106,6 +126,8 @@ if (interactiveBoard instanceof HTMLElement) {
     }
   });
 }
+
+void loadSplashProgress();
 
 document.querySelectorAll('.letter-tile').forEach((tile) => {
   tile.addEventListener('pointerdown', () => {
@@ -329,9 +351,13 @@ function getLeaderboardButton(): HTMLButtonElement | null {
 
 function openSubreddit(): void {
   try {
-    window.open(subredditUrl, '_blank', 'noopener,noreferrer');
+    navigateTo(subredditUrl);
   } catch {
-    // Static previews and some embed contexts may block opening new tabs.
+    try {
+      window.open(subredditUrl, '_blank', 'noopener,noreferrer');
+    } catch {
+      // Static previews and some embed contexts may block opening new tabs.
+    }
   }
 }
 
@@ -346,6 +372,8 @@ function openLeaderboard(): void {
   if (leaderboardClose instanceof HTMLButtonElement) {
     leaderboardClose.focus();
   }
+
+  void loadDailyLeaderboard();
 }
 
 function closeLeaderboard(): void {
@@ -394,4 +422,180 @@ function cycleTitleTiles(): void {
 
 function tileKey(row: number, col: number): string {
   return `${row},${col}`;
+}
+
+async function loadSplashProgress(): Promise<void> {
+  try {
+    const response = await fetch('/api/progress');
+    if (!response.ok) {
+      return;
+    }
+    const progress = toProgressSummary(await response.json());
+    if (!progress) {
+      return;
+    }
+
+    if (dailyKicker instanceof HTMLElement) {
+      dailyKicker.textContent =
+        progress.dailyStreak > 0
+          ? `${progress.dailyStreak} day streak`
+          : 'Start your streak';
+    }
+    if (versusKicker instanceof HTMLElement) {
+      const record = progress.versus;
+      versusKicker.textContent = `Level ${progress.level} · ${record.wins}W ${record.losses}L ${record.draws}D`;
+    }
+  } catch {
+    // Keep the static button labels when Reddit data is unavailable.
+  }
+}
+
+async function loadDailyLeaderboard(): Promise<void> {
+  renderLeaderboardMessage("Loading today's rankings...");
+
+  try {
+    const response = await fetch('/api/daily/leaderboard');
+    if (!response.ok) {
+      throw new Error(`Leaderboard failed: ${response.status}`);
+    }
+    const data = toDailyLeaderboardResponse(await response.json());
+    if (!data) {
+      throw new Error('Leaderboard response was invalid.');
+    }
+    renderLeaderboard(data.leaderboard, data.playerRank);
+  } catch {
+    renderLeaderboardMessage('Rankings are unavailable right now.');
+  }
+}
+
+function renderLeaderboard(
+  leaderboard: LeaderboardEntry[],
+  playerRank: LeaderboardEntry | null
+): void {
+  if (!(leaderboardList instanceof HTMLOListElement)) {
+    return;
+  }
+
+  const entries = leaderboard.slice(0, 3);
+  if (playerRank && !entries.some((entry) => entry.rank === playerRank.rank)) {
+    entries.push(playerRank);
+  }
+
+  leaderboardList.replaceChildren();
+  if (entries.length === 0) {
+    renderLeaderboardMessage('No one has finished today yet.');
+    return;
+  }
+
+  for (const entry of entries) {
+    const item = document.createElement('li');
+    const rank = document.createElement('span');
+    const player = document.createElement('span');
+    const score = document.createElement('span');
+
+    if (playerRank?.rank === entry.rank) {
+      item.classList.add('is-player');
+    }
+    rank.className = 'rank';
+    rank.textContent = entry.rank.toString();
+    player.className = 'player';
+    player.textContent = entry.displayName;
+    score.className = 'score';
+    score.textContent = `${entry.guesses} ${entry.guesses === 1 ? 'guess' : 'guesses'}`;
+    item.append(rank, player, score);
+    leaderboardList.append(item);
+  }
+}
+
+function renderLeaderboardMessage(message: string): void {
+  if (!(leaderboardList instanceof HTMLOListElement)) {
+    return;
+  }
+
+  const item = document.createElement('li');
+  const label = document.createElement('span');
+  item.className = 'leaderboard-message';
+  label.className = 'player';
+  label.textContent = message;
+  item.append(label);
+  leaderboardList.replaceChildren(item);
+}
+
+function toProgressSummary(value: unknown): PlayerProgressSummary | null {
+  if (!isRecord(value) || value.type !== 'progress' || !isRecord(value.progress)) {
+    return null;
+  }
+
+  const progress = value.progress;
+  const versus = progress.versus;
+  if (
+    !isRecord(versus) ||
+    !isNumber(progress.totalXp) ||
+    !isNumber(progress.dailyStreak) ||
+    !(typeof progress.lastDailyDate === 'string' || progress.lastDailyDate === null) ||
+    !isNumber(progress.level) ||
+    !isNumber(progress.levelXp) ||
+    !isNumber(progress.xpForNextLevel) ||
+    !isNumber(versus.wins) ||
+    !isNumber(versus.losses) ||
+    !isNumber(versus.draws)
+  ) {
+    return null;
+  }
+
+  return {
+    totalXp: progress.totalXp,
+    dailyStreak: progress.dailyStreak,
+    lastDailyDate: progress.lastDailyDate,
+    level: progress.level,
+    levelXp: progress.levelXp,
+    xpForNextLevel: progress.xpForNextLevel,
+    versus: {
+      wins: versus.wins,
+      losses: versus.losses,
+      draws: versus.draws,
+    },
+  };
+}
+
+function toDailyLeaderboardResponse(
+  value: unknown
+): DailyLeaderboardResponse | null {
+  if (
+    !isRecord(value) ||
+    value.type !== 'daily-leaderboard' ||
+    !Array.isArray(value.leaderboard)
+  ) {
+    return null;
+  }
+
+  const leaderboard = value.leaderboard.filter(isLeaderboardEntry);
+  if (leaderboard.length !== value.leaderboard.length) {
+    return null;
+  }
+
+  const playerRank = value.playerRank;
+  if (!(playerRank === null || isLeaderboardEntry(playerRank))) {
+    return null;
+  }
+
+  return { type: 'daily-leaderboard', leaderboard, playerRank };
+}
+
+function isLeaderboardEntry(value: unknown): value is LeaderboardEntry {
+  return (
+    isRecord(value) &&
+    isNumber(value.rank) &&
+    typeof value.displayName === 'string' &&
+    isNumber(value.guesses) &&
+    isNumber(value.solvedAt)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }

@@ -7,6 +7,7 @@ import {
   Types,
 } from 'phaser';
 import { showShareSheet } from '@devvit/web/client';
+import { exitExpandedMode } from '@devvit/web/client';
 import type { Coord } from '../../shared/pattern';
 import { coordKey, coordLabel } from '../../shared/pattern';
 import type {
@@ -220,7 +221,7 @@ export class VersusLobby extends Scene {
         resolution: TEXT_RESOLUTION,
       })
       .setOrigin(0.5);
-    this.createButton(58, 30, 'Back', () => this.goBack());
+    this.createButton(58, 30, 'Back', (pointer) => this.goBack(pointer));
 
     if (!this.lobby) {
       this.drawCenteredMessage(this.status);
@@ -244,7 +245,7 @@ export class VersusLobby extends Scene {
     }
   }
 
-  private goBack(): void {
+  private goBack(pointer: Input.Pointer): void {
     if (
       this.pickerMode ||
       this.incomingInvite ||
@@ -265,7 +266,20 @@ export class VersusLobby extends Scene {
       this.render();
       return;
     }
-    this.scene.start('PatternGame');
+    try {
+      if (pointer.event instanceof MouseEvent) {
+        exitExpandedMode(pointer.event);
+        return;
+      }
+    } catch {
+      // Static previews do not provide Reddit's Devvit bridge.
+    }
+
+    try {
+      window.open('splash.html', '_self');
+    } catch {
+      // Some embedded contexts may block same-frame navigation.
+    }
   }
 
   private drawLobbyOverview(): void {
@@ -1358,7 +1372,7 @@ export class VersusLobby extends Scene {
     x: number,
     y: number,
     label: string,
-    onClick: () => void,
+    onClick: (pointer: Input.Pointer) => void,
     variant: 'neutral' | 'accept' | 'decline' = 'neutral'
   ): void {
     const width = Math.max(78, Math.min(126, label.length * 7 + 28));
@@ -1380,7 +1394,7 @@ export class VersusLobby extends Scene {
       .zone(x - width / 2, y - 16, width, 32)
       .setOrigin(0)
       .setInteractive({ useHandCursor: true })
-      .on('pointerup', onClick);
+      .on('pointerup', (pointer: Input.Pointer) => onClick(pointer));
   }
 
   private drawCenteredMessage(message: string): void {

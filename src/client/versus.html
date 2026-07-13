@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="game.css" />
+    <title>Tile Wars Versus</title>
+  </head>
+
+  <body data-start-mode="versus">
+    <div id="app">
+      <div id="game-container"></div>
+      <input
+        id="versus-code-input"
+        class="versus-code-input"
+        type="text"
+        inputmode="text"
+        autocomplete="off"
+        autocapitalize="characters"
+        spellcheck="false"
+        maxlength="12"
+        aria-label="Versus invitation code"
+        placeholder="TYPE CODE"
+      />
+    </div>
+    <script type="module" src="game.ts"></script>
+  </body>
+</html>

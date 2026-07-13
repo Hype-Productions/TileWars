@@ -28,6 +28,8 @@ const config: Phaser.Types.Core.GameConfig = {
 
 const StartGame = (parent: string) => {
   const shared = readVersusShareData();
+  const startMode =
+    document.body.dataset.startMode === 'versus' ? 'versus' : 'daily';
   return new Game({
     ...config,
     parent,
@@ -36,6 +38,7 @@ const StartGame = (parent: string) => {
         if (shared) {
           game.registry.set('sharedInviteId', shared.inviteId);
         }
+        game.registry.set('startMode', startMode);
       },
     },
   });

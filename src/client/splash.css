@@ -548,6 +548,18 @@
   background: rgba(255, 255, 255, 0.68);
 }
 
+.leaderboard-list .leaderboard-message {
+  display: block;
+  padding: 14px;
+  color: rgba(20, 33, 48, 0.7);
+  text-align: center;
+}
+
+.leaderboard-list li.is-player {
+  border-color: rgba(53, 208, 127, 0.72);
+  background: rgba(213, 255, 199, 0.78);
+}
+
 .rank {
   display: grid;
   place-items: center;
