@@ -1,9 +1,11 @@
 import { requestExpandedMode } from '@devvit/web/client';
+import { readVersusShareData } from './versusShare';
 
 const dailyButton = document.getElementById('daily-button');
 const versusButton = document.getElementById('versus-button');
 const interactiveBoard = document.getElementById('interactive-board');
 
+<<<<<<< Updated upstream
 const tileColors = [
   'tile-cream',
   'tile-blue',
@@ -19,6 +21,13 @@ type BoardCoord = readonly [number, number];
 
 const openExpandedGame = (event: MouseEvent): void => {
   try {
+=======
+if (startButton instanceof HTMLButtonElement) {
+  if (readVersusShareData()) {
+    startButton.textContent = 'Open Versus invitation';
+  }
+  startButton.addEventListener('click', (event) => {
+>>>>>>> Stashed changes
     requestExpandedMode(event, 'game');
   } catch {
     // Static previews do not provide Reddit's Devvit bridge.

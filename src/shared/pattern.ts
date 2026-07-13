@@ -21,6 +21,11 @@ export type ValidationResult = {
   message: string;
 };
 
+export type PatternRules = {
+  minTiles: number;
+  maxTiles: number;
+};
+
 export type WeightedColor = {
   color: 'red' | 'blue' | 'orange';
   weight: number;
@@ -82,11 +87,21 @@ export const parsePatternInput = (input: string): Coord[] => {
   });
 };
 
-export const validatePattern = (pattern: Coord[]): ValidationResult => {
-  if (pattern.length < MIN_PATTERN_SIZE || pattern.length > MAX_PATTERN_SIZE) {
+export const validatePattern = (
+  pattern: Coord[],
+  rules: PatternRules = {
+    minTiles: MIN_PATTERN_SIZE,
+    maxTiles: MAX_PATTERN_SIZE,
+  }
+): ValidationResult => {
+  if (pattern.length < rules.minTiles || pattern.length > rules.maxTiles) {
+    const sizeLabel =
+      rules.minTiles === rules.maxTiles
+        ? `${rules.minTiles}`
+        : `${rules.minTiles}-${rules.maxTiles}`;
     return {
       valid: false,
-      message: `Pattern must contain ${MIN_PATTERN_SIZE}-${MAX_PATTERN_SIZE} tiles.`,
+      message: `Pattern must contain ${sizeLabel} tiles.`,
     };
   }
 

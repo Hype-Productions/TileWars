@@ -23,6 +23,15 @@ import {
   setClueModeInSession,
   toggleMarkerInSession,
 } from '../../shared/game';
+import type {
+  PlayerProgressSummary,
+  ProgressResponse,
+  ProgressReward,
+} from '../../shared/progression';
+import {
+  createInitialProgress,
+  summarizeProgress,
+} from '../../shared/progression';
 
 type StoredGuess = {
   coord: Coord;
@@ -81,15 +90,31 @@ export class PatternGame extends Scene {
   private pickerKeys = new Set<string>();
   private pendingTileKey: string | null = null;
   private dailyUpdateInFlight = false;
+  private progress: PlayerProgressSummary | null = null;
+  private dailyReward: ProgressReward | null = null;
+  private acknowledgedRewardIds = new Set<string>();
 
   constructor() {
     super('PatternGame');
   }
 
   create(): void {
+    const sharedInviteId: unknown = this.registry.get('sharedInviteId');
+    if (typeof sharedInviteId === 'string') {
+      this.scene.start('VersusLobby', { inviteId: sharedInviteId });
+      return;
+    }
     this.cameras.main.setBackgroundColor(0xf6f0e8);
-    this.scale.on('resize', () => this.renderScreen());
+    this.scale.on('resize', this.handleResize, this);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.handleResize, this);
+    });
     this.showLanding('Choose a mode to start.');
+    void this.loadProgress();
+  }
+
+  private handleResize(): void {
+    this.renderScreen();
   }
 
   private clearInteractiveObjects(): void {
@@ -218,6 +243,33 @@ export class PatternGame extends Scene {
     }
     this.pattern = [];
     this.gameLabel = `Daily #${data.session.puzzleId.puzzleNumber}`;
+    if (data.progress) {
+      this.progress = data.progress;
+    }
+    this.dailyReward = data.reward ?? null;
+  }
+
+  private async loadProgress(): Promise<void> {
+    try {
+      const response = await fetch('/api/progress');
+      if (!response.ok) {
+        throw new Error(`Progress failed: ${response.status}`);
+      }
+      const value: unknown = await response.json();
+      if (isProgressResponse(value)) {
+        this.progress = value.progress;
+        if (this.screen === 'landing') {
+          this.renderScreen();
+        }
+      }
+    } catch {
+      if (isLocalPreview()) {
+        this.progress = summarizeProgress(createInitialProgress());
+        if (this.screen === 'landing') {
+          this.renderScreen();
+        }
+      }
+    }
   }
 
   private drawLanding(): void {
@@ -233,6 +285,17 @@ export class PatternGame extends Scene {
       })
       .setOrigin(0.5);
 
+    if (this.progress) {
+      this.add
+        .text(width - 22, 42, `🔥 ${this.progress.dailyStreak}`, {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: '18px',
+          color: '#d9480f',
+          resolution: TEXT_RESOLUTION,
+        })
+        .setOrigin(1, 0.5);
+    }
+
     this.add
       .text(width / 2, 82, 'Find a hidden linked shape from color clues.', {
         fontFamily: 'Arial, sans-serif',
@@ -245,8 +308,11 @@ export class PatternGame extends Scene {
 
     const centerX = width / 2;
     const topY = Math.max(132, height * 0.2);
-    this.createButton(centerX - 86, topY, 'Daily', () => this.startDailyGame());
-    this.createButton(centerX + 86, topY, 'Custom', () => {
+    this.createButton(centerX - 142, topY, 'Daily', () => this.startDailyGame());
+    this.createButton(centerX, topY, 'Versus', () => {
+      this.scene.start('VersusLobby');
+    });
+    this.createButton(centerX + 142, topY, 'Custom', () => {
       this.customPane = 'menu';
       this.showLanding('Choose a custom setup.');
     });
@@ -384,6 +450,17 @@ export class PatternGame extends Scene {
         color: '#18212b',
       })
       .setOrigin(0.5);
+
+    if (this.progress) {
+      this.add
+        .text(width - 18, 28, `🔥 ${this.progress.dailyStreak}`, {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: mobile ? '15px' : '18px',
+          color: '#d9480f',
+          resolution: TEXT_RESOLUTION,
+        })
+        .setOrigin(1, 0.5);
+    }
 
     this.add
       .text(width / 2, 60, '', {
@@ -555,6 +632,14 @@ export class PatternGame extends Scene {
           ? 'Result saved'
           : 'Custom result',
     ];
+    if (this.dailyReward) {
+      lines.push(`+${this.dailyReward.amount} XP - ${this.dailyReward.label}`);
+    }
+    if (this.progress) {
+      lines.push(
+        `Level ${this.progress.level} - ${this.progress.levelXp}/${this.progress.xpForNextLevel} XP`
+      );
+    }
     const leaderboardLines = this.leaderboard
       .slice(0, 3)
       .map((entry) => `#${entry.rank} ${entry.displayName}: ${entry.guesses}`);
@@ -584,20 +669,36 @@ export class PatternGame extends Scene {
         },
     });
 
-    this.drawModal('Solved', [...lines, ...leaderboardLines], buttons);
+    const modal = this.drawModal(
+      'Solved',
+      [...lines, ...leaderboardLines],
+      buttons,
+      this.progress ? 34 : 0
+    );
+    if (this.progress) {
+      this.drawResultProgressBar(
+        modal.x + 34,
+        modal.buttonY - 43,
+        modal.width - 68
+      );
+    }
+    if (this.dailyReward) {
+      void this.acknowledgeDailyReward(this.dailyReward.rewardId);
+    }
   }
 
   private drawModal(
     title: string,
     lines: string[],
-    buttons: { label: string; onClick: () => void }[]
-  ): void {
+    buttons: { label: string; onClick: () => void }[],
+    extraHeight = 0
+  ): { x: number; y: number; width: number; height: number; buttonY: number } {
     const width = this.scale.width;
     const height = this.scale.height;
     const modalWidth = Math.min(width - 32, 420);
     const modalHeight = Math.min(
       height - 48,
-      150 + lines.length * 24 + (buttons.length > 0 ? 48 : 0)
+      150 + lines.length * 24 + (buttons.length > 0 ? 48 : 0) + extraHeight
     );
     const x = (width - modalWidth) / 2;
     const y = (height - modalHeight) / 2;
@@ -643,7 +744,7 @@ export class PatternGame extends Scene {
         this.modal = 'none';
         this.renderScreen();
       });
-      return;
+      return { x, y, width: modalWidth, height: modalHeight, buttonY };
     }
 
     const spacing = Math.min(136, modalWidth / Math.max(buttons.length, 1));
@@ -651,6 +752,50 @@ export class PatternGame extends Scene {
     buttons.forEach((button, index) => {
       this.createButton(startX + index * spacing, buttonY, button.label, button.onClick);
     });
+    return { x, y, width: modalWidth, height: modalHeight, buttonY };
+  }
+
+  private drawResultProgressBar(x: number, y: number, width: number): void {
+    if (!this.progress) {
+      return;
+    }
+    const ratio = Math.min(
+      1,
+      this.progress.levelXp / this.progress.xpForNextLevel
+    );
+    const background = this.add.graphics();
+    background.fillStyle(0xd8d0c5, 1);
+    background.fillRoundedRect(x, y, width, 12, 6);
+    const fill = this.add
+      .rectangle(x, y + 6, width * ratio, 10, 0x43c978)
+      .setOrigin(0, 0.5)
+      .setScale(0, 1);
+    this.tweens.add({
+      targets: fill,
+      scaleX: 1,
+      duration: 650,
+      ease: 'Sine.easeOut',
+    });
+  }
+
+  private async acknowledgeDailyReward(rewardId: string): Promise<void> {
+    if (this.acknowledgedRewardIds.has(rewardId)) {
+      return;
+    }
+    this.acknowledgedRewardIds.add(rewardId);
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    try {
+      const response = await fetch('/api/progress/rewards/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rewardIds: [rewardId] }),
+      });
+      if (!response.ok) {
+        this.acknowledgedRewardIds.delete(rewardId);
+      }
+    } catch {
+      this.acknowledgedRewardIds.delete(rewardId);
+    }
   }
 
   private clueRows(): { label: string; color: number }[] {
@@ -1093,8 +1238,53 @@ const toDailySessionResponse = (value: unknown): DailySessionResponse | null => 
   if (value.playerRank !== undefined) {
     response.playerRank = value.playerRank;
   }
+  if (isProgressSummary(value.progress)) {
+    response.progress = value.progress;
+  }
+  if (isProgressReward(value.reward)) {
+    response.reward = value.reward;
+  }
 
   return response;
+};
+
+const isProgressResponse = (value: unknown): value is ProgressResponse => {
+  return (
+    isRecord(value) &&
+    value.type === 'progress' &&
+    isProgressSummary(value.progress) &&
+    Array.isArray(value.pendingRewards)
+  );
+};
+
+const isProgressSummary = (
+  value: unknown
+): value is PlayerProgressSummary => {
+  return (
+    isRecord(value) &&
+    typeof value.totalXp === 'number' &&
+    typeof value.dailyStreak === 'number' &&
+    typeof value.level === 'number' &&
+    typeof value.levelXp === 'number' &&
+    typeof value.xpForNextLevel === 'number' &&
+    isRecord(value.versus) &&
+    typeof value.versus.wins === 'number' &&
+    typeof value.versus.losses === 'number' &&
+    typeof value.versus.draws === 'number'
+  );
+};
+
+const isProgressReward = (value: unknown): value is ProgressReward => {
+  return (
+    isRecord(value) &&
+    typeof value.rewardId === 'string' &&
+    (value.source === 'daily' || value.source === 'versus') &&
+    typeof value.amount === 'number' &&
+    typeof value.label === 'string' &&
+    typeof value.previousTotalXp === 'number' &&
+    typeof value.newTotalXp === 'number' &&
+    typeof value.createdAt === 'number'
+  );
 };
 
 const isPlayerSession = (value: unknown): value is PlayerSession => {
@@ -1127,4 +1317,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
 
 const snapBoardSize = (size: number): number => {
   return Math.floor(size / BOARD_DIMENSION) * BOARD_DIMENSION;
+};
+
+const isLocalPreview = (): boolean => {
+  return (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === '127.0.0.1' ||
+      window.location.hostname === 'localhost')
+  );
 };

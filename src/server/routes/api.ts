@@ -24,8 +24,17 @@ import {
   saveBestDailyResult,
   saveDailySession,
 } from '../core/dailyStorage';
+import {
+  awardDailyProgress,
+  loadProgressSummary,
+} from '../core/progressStorage';
+import { versusApi } from './versus';
+import { progressApi } from './progress';
 
 export const api = new Hono();
+
+api.route('/versus', versusApi);
+api.route('/progress', progressApi);
 
 api.get('/daily', (c) => {
   return c.json<DailyResponse>({
@@ -47,12 +56,14 @@ api.get('/daily/session', async (c) => {
   }
 
   const leaderboard = await loadDailyLeaderboard(puzzleId.date, user.userId);
+  const progress = await loadProgressSummary(user.userId, puzzleId.date);
 
   return c.json<DailySessionResponse>({
     type: 'daily-session',
     session,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    progress,
   });
 });
 
@@ -82,12 +93,18 @@ api.post('/daily/guess', async (c) => {
       nextSession.puzzleId.date,
       user.userId
     );
+    const progressAward = await awardDailyProgress(
+      user.userId,
+      nextSession.puzzleId.date
+    );
 
     return c.json<DailySessionResponse>({
       type: 'daily-session',
       session: nextSession,
       leaderboard: leaderboard.leaderboard,
       playerRank: leaderboard.playerRank,
+      progress: progressAward.progress,
+      ...(progressAward.reward ? { reward: progressAward.reward } : {}),
     });
   }
 
@@ -112,12 +129,17 @@ api.post('/daily/mark', async (c) => {
     nextSession.puzzleId.date,
     user.userId
   );
+  const progress = await loadProgressSummary(
+    user.userId,
+    nextSession.puzzleId.date
+  );
 
   return c.json<DailySessionResponse>({
     type: 'daily-session',
     session: nextSession,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    progress,
   });
 });
 
@@ -133,12 +155,17 @@ api.post('/daily/mode', async (c) => {
     nextSession.puzzleId.date,
     user.userId
   );
+  const progress = await loadProgressSummary(
+    user.userId,
+    nextSession.puzzleId.date
+  );
 
   return c.json<DailySessionResponse>({
     type: 'daily-session',
     session: nextSession,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    progress,
   });
 });
 
@@ -166,12 +193,14 @@ api.post('/daily/dev-reset', async (c) => {
   await saveDailySession(session, user.userId);
 
   const leaderboard = await loadDailyLeaderboard(puzzleId.date, user.userId);
+  const progress = await loadProgressSummary(user.userId, puzzleId.date);
 
   return c.json<DailySessionResponse>({
     type: 'daily-session',
     session,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    progress,
   });
 });
 

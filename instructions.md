@@ -19,20 +19,30 @@ npm run type-check
 npm run lint
 ```
 
+For a browser-only UI preview after building:
+
+```bash
+python -m http.server 5173 --directory dist/client
+```
+
+Then open `http://127.0.0.1:5173/game.html`. Daily persistence and real Versus
+matchmaking are not available in this static preview.
+
 To playtest through Devvit:
 
 ```bash
 npm run login
-npm run dev
+npm run dev -- TileFinder
 ```
 
 `npm run login` is only needed if you are not already logged into Devvit.
 
 ## Starting A Game
 
-The first screen has two main options:
+The first screen has three main options:
 
 - **Daily** starts the daily puzzle generated from the current UTC date.
+- **Versus** opens asynchronous player matches.
 - **Custom** opens testing options.
 
 Custom has two options:
@@ -71,3 +81,34 @@ Already-found pattern tiles still count as clue sources for later guesses.
 - **New / New game**: return to the first screen.
 
 The puzzle is solved when the remaining counter reaches zero.
+
+## Versus
+
+Versus needs the Reddit playtest version because matchmaking, hidden patterns, and
+scores are stored in Devvit Redis. A plain local preview can be used to review the
+landing screen and six-tile pattern picker, but it cannot create a real opponent.
+
+The Versus hub shows your level, XP progress, Daily streak, overall record, and
+matches grouped into **Your Turn**, **Waiting**, and **Results**.
+
+To start a public match, press **Find Match**, select exactly 6 connected tiles,
+and submit. If another pattern is waiting, their board opens immediately.
+Otherwise the search continues after you leave. One search creates one match.
+
+**Invite** lets you submit a pattern and share a Reddit invitation link. The first
+other player to open the invitation submits their own pattern and starts a direct
+match.
+
+You solve the opponent's pattern while they solve yours. The clock in the top-right
+shows elapsed solve time. The server keeps the official time. Fewest guesses wins;
+elapsed time breaks a tie.
+
+Once you finish, the opponent can see your score and replay grid. When both players
+finish, **Results** shows both grids and the winner. **Rematch** lets one player
+submit a new pattern as an invitation; the other player submits their pattern to
+accept it.
+
+Wins give 100 XP, draws give 70 XP, and completed losses give 40 XP. Daily puzzles
+start at 150 XP and gain 15 XP per consecutive UTC-day streak, up to 300 XP. A
+missed Daily resets the next solved puzzle to a one-day streak. Dev reset can replay
+the puzzle for testing but cannot award its XP twice.

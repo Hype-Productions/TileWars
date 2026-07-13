@@ -8,6 +8,10 @@ import {
   getRemainingCount,
   todayUtcDate,
 } from './pattern';
+import type {
+  PlayerProgressSummary,
+  ProgressReward,
+} from './progression';
 
 export type GameMode =
   | 'daily'
@@ -63,6 +67,8 @@ export type DailySessionResponse = {
   session: PlayerSession;
   leaderboard?: LeaderboardEntry[];
   playerRank?: LeaderboardEntry | null;
+  progress?: PlayerProgressSummary;
+  reward?: ProgressReward;
 };
 
 export type DailyGuessRequest = {

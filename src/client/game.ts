@@ -1,6 +1,10 @@
 import * as Phaser from 'phaser';
 import { AUTO, Game } from 'phaser';
 import { PatternGame } from './scenes/PatternGame';
+import { VersusGame } from './scenes/VersusGame';
+import { VersusLobby } from './scenes/VersusLobby';
+import { VersusResult } from './scenes/VersusResult';
+import { readVersusShareData } from './versusShare';
 
 //  Find out more information about the Game Config at:
 //  https://docs.phaser.io/api-documentation/typedef/types-core#gameconfig
@@ -19,11 +23,22 @@ const config: Phaser.Types.Core.GameConfig = {
     width: 1024,
     height: 768,
   },
-  scene: [PatternGame],
+  scene: [PatternGame, VersusLobby, VersusGame, VersusResult],
 };
 
 const StartGame = (parent: string) => {
-  return new Game({ ...config, parent });
+  const shared = readVersusShareData();
+  return new Game({
+    ...config,
+    parent,
+    callbacks: {
+      preBoot: (game) => {
+        if (shared) {
+          game.registry.set('sharedInviteId', shared.inviteId);
+        }
+      },
+    },
+  });
 };
 
 document.addEventListener('DOMContentLoaded', () => {
