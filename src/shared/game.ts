@@ -62,6 +62,17 @@ export type LeaderboardEntry = {
   solvedAt: number;
 };
 
+export type LeaderboardDisplayRow =
+  | { kind: 'entry'; entry: LeaderboardEntry; isPlayer: boolean }
+  | { kind: 'ellipsis' };
+
+export type LeaderboardRankColor = 'green' | 'red' | 'blue' | 'orange';
+
+export const leaderboardRankColor = (rank: number): LeaderboardRankColor => {
+  const colors: LeaderboardRankColor[] = ['green', 'red', 'blue', 'orange'];
+  return colors[(Math.max(1, rank) - 1) % colors.length] ?? 'green';
+};
+
 export type DailySessionResponse = {
   type: 'daily-session';
   session: PlayerSession;
@@ -208,7 +219,7 @@ export const setClueModeInSession = (
 
 export const createShareText = (session: PlayerSession): string => {
   const title =
-    session.puzzleId.mode === 'daily' ? 'Tile Wars Daily' : 'Tile Wars';
+    session.puzzleId.mode === 'daily' ? 'TILEWARS Daily' : 'TILEWARS';
   const result = session.solved
     ? `Solved in ${session.guesses.length} guesses`
     : `${session.foundKeys.length} found in ${session.guesses.length} guesses`;
@@ -218,6 +229,25 @@ export const createShareText = (session: PlayerSession): string => {
 
 export const leaderboardScore = (guesses: number, solvedAt: number): number => {
   return guesses * 10_000_000_000_000 + solvedAt;
+};
+
+export const selectLeaderboardDisplayRows = (
+  leaderboard: LeaderboardEntry[],
+  playerRank: LeaderboardEntry | null
+): LeaderboardDisplayRow[] => {
+  const leaders = leaderboard.slice(0, 3);
+  const rows: LeaderboardDisplayRow[] = leaders.map((entry) => ({
+    kind: 'entry',
+    entry,
+    isPlayer: playerRank?.rank === entry.rank,
+  }));
+
+  if (playerRank && !leaders.some((entry) => entry.rank === playerRank.rank)) {
+    rows.push({ kind: 'ellipsis' });
+    rows.push({ kind: 'entry', entry: playerRank, isPlayer: true });
+  }
+
+  return rows;
 };
 
 export const puzzleNumberForDate = (date: string): number => {

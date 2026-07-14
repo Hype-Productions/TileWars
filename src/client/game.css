@@ -39,7 +39,7 @@ body {
   height: 100%;
 }
 
-.versus-code-input {
+.versus-overlay-input {
   position: fixed;
   z-index: 20;
   display: none;
@@ -56,6 +56,13 @@ body {
   outline: none;
 }
 
-.versus-code-input.is-visible {
+.versus-overlay-input.is-visible {
   display: block;
+}
+
+.versus-overlay-input.is-history {
+  padding: 0 12px;
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: none;
 }

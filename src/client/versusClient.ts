@@ -5,6 +5,7 @@ import type {
   VersusInviteResponse,
   VersusLobbyResponse,
   VersusRematchResponse,
+  VersusResultResponse,
   VersusSessionResponse,
 } from '../shared/api';
 
@@ -42,6 +43,16 @@ export const getVersusSession = async (
     `/api/versus/matches/${encodeURIComponent(matchId)}/session`,
     'GET',
     'versus-session'
+  );
+};
+
+export const getVersusResult = async (
+  matchId: string
+): Promise<VersusResultResponse> => {
+  return versusRequest(
+    `/api/versus/matches/${encodeURIComponent(matchId)}/result`,
+    'GET',
+    'versus-result'
   );
 };
 
@@ -192,6 +203,7 @@ const versusRequest = async <
     | VersusSessionResponse
     | VersusInviteResponse
     | VersusRematchResponse
+    | VersusResultResponse
     | RivalryOpponentsResponse
     | RivalryHistoryResponse
     | ProgressResponse,

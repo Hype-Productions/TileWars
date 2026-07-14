@@ -14,12 +14,35 @@ import {
   createDailyPuzzleId,
   createInitialSession,
   dailyPatternForPuzzle,
+  leaderboardRankColor,
   toggleMarkerInSession,
+  selectLeaderboardDisplayRows,
 } from '../../shared/game';
+import {
+  SerializedMarkerQueue,
+  replayPendingMarkerOperations,
+} from '../../shared/markerSync';
 import type {
   PlayerProgressSummary,
   ProgressReward,
 } from '../../shared/progression';
+import {
+  buildXpAnimationSegments,
+  dailyXpForStreak,
+  summarizeProgress,
+} from '../../shared/progression';
+import {
+  TILE_WARS_COLORS,
+  clearSceneContent,
+  drawTileWarsLoadingMessage,
+  ensureTileWarsSceneShell,
+  type TileWarsSceneShell,
+  type TileButtonVariant,
+  drawGameplayStatsHud,
+  drawHeaderChip,
+  drawHowToPlayModal,
+  drawTileButton,
+} from './tileWarsTheme';
 
 type StoredGuess = {
   coord: Coord;
@@ -37,7 +60,7 @@ type TileView = {
 type ColorName = 'red' | 'blue' | 'orange';
 type Screen = 'loading' | 'game';
 type Modal = 'none' | 'clues' | 'result';
-type ButtonVariant = 'dark' | 'blue' | 'green' | 'orange' | 'red';
+type ButtonVariant = TileButtonVariant;
 
 const BOARD_DIMENSION = 5;
 const TEXT_RESOLUTION =
@@ -86,16 +109,21 @@ export class PatternGame extends Scene {
   private pendingTileKey: string | null = null;
   private lastGuessKey: string | null = null;
   private dailyUpdateInFlight = false;
+  private confirmedSession: PlayerSession | null = null;
+  private markerQueue = new SerializedMarkerQueue();
   private progress: PlayerProgressSummary | null = null;
   private dailyReward: ProgressReward | null = null;
   private acknowledgedRewardIds = new Set<string>();
   private showingSolvedReveal = false;
+  private sceneShell: TileWarsSceneShell | null = null;
 
   constructor() {
     super('PatternGame');
   }
 
   create(): void {
+    this.sceneShell = null;
+    this.markerQueue.reset();
     const sharedInviteId: unknown = this.registry.get('sharedInviteId');
     if (typeof sharedInviteId === 'string') {
       this.scene.start('VersusLobby', { inviteId: sharedInviteId });
@@ -143,10 +171,28 @@ export class PatternGame extends Scene {
   }
 
   private renderScreen(): void {
-    this.tweens.killAll();
     this.clearInteractiveObjects();
-    this.children.removeAll(true);
+    clearSceneContent(this, this.sceneShell);
     this.tileViews = [];
+
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const mobile = width < 760;
+    const shortLandscape = width >= 600 && height < 500;
+    const headingY = this.screen === 'loading'
+      ? 46
+      : shortLandscape
+        ? 24
+        : mobile
+          ? 38
+          : 36;
+    this.sceneShell = ensureTileWarsSceneShell(this, this.sceneShell, {
+      width,
+      height,
+      headingY,
+      mobile: mobile || shortLandscape,
+      maxHeadingSize: mobile ? 31 : 38,
+    });
 
     if (this.screen === 'loading') {
       this.drawLoading();
@@ -186,10 +232,14 @@ export class PatternGame extends Scene {
         throw new Error('Daily session response was invalid.');
       }
       this.applyDailyResponse(data);
+      this.confirmedSession = data.session;
+      if (data.session.solved && !data.reward) {
+        await this.loadPendingDailyReward(data.session.puzzleId.date);
+      }
       this.startGame(
         data.session.solved
           ? `Solved in ${data.session.guesses.length} guesses.`
-          : 'Daily progress loaded.',
+          : 'Tap a tile to make your guess.',
         data.session.solved ? 'result' : 'none'
       );
     } catch (error) {
@@ -197,6 +247,7 @@ export class PatternGame extends Scene {
       const puzzleId = createDailyPuzzleId(todayUtcDate());
       this.pattern = dailyPatternForPuzzle(puzzleId);
       this.session = createInitialSession(puzzleId, this.pattern.length);
+      this.confirmedSession = this.session;
       this.leaderboard = [];
       this.playerRank = null;
       this.startGame(
@@ -220,22 +271,36 @@ export class PatternGame extends Scene {
     this.dailyReward = data.reward ?? null;
   }
 
+  private async loadPendingDailyReward(date: string): Promise<void> {
+    try {
+      const response = await fetch('/api/progress');
+      if (!response.ok) {
+        return;
+      }
+      const value: unknown = await response.json();
+      if (!isRecord(value)) {
+        return;
+      }
+      if (isProgressSummary(value.progress)) {
+        this.progress = value.progress;
+      }
+      if (Array.isArray(value.pendingRewards)) {
+        this.dailyReward =
+          value.pendingRewards.find(
+            (reward): reward is ProgressReward =>
+              isProgressReward(reward) && reward.rewardId === `daily:${date}`
+          ) ?? null;
+      }
+    } catch {
+      // The static preview and transient Reddit errors keep the final progress snapshot.
+    }
+  }
+
   private drawLoading(): void {
     const width = this.scale.width;
     const height = this.scale.height;
     this.cameras.resize(width, height);
-    this.drawGameBackdrop(width, height);
-    this.drawTileTitle(width / 2, 46, width < 760);
-
-    this.add
-      .text(width / 2, Math.max(118, height * 0.3), this.currentStatus, {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '18px',
-        color: '#25313b',
-        align: 'center',
-        wordWrap: { width: Math.min(520, width - 32) },
-      })
-      .setOrigin(0.5);
+    drawTileWarsLoadingMessage(this, this.currentStatus);
   }
 
   private drawGame(): void {
@@ -249,19 +314,18 @@ export class PatternGame extends Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     const mobile = width < 760;
+    const shortLandscape = width >= 600 && height < 500;
     this.cameras.resize(width, height);
-    this.drawGameBackdrop(width, height);
+    this.drawDailyHeader(mobile, shortLandscape);
 
-    this.drawTileTitle(width / 2, mobile ? 38 : 36, mobile);
-
-    this.layoutBoard(mobile);
+    this.layoutBoard(mobile, shortLandscape);
     this.createTiles();
 
-    this.drawStatsHud(mobile);
-    this.drawGameToolbar(mobile);
+    this.drawStatsHud(mobile, shortLandscape);
+    this.drawGameToolbar(mobile, shortLandscape);
 
     this.add
-      .text(width / 2, mobile ? height - 116 : height - 42, '', {
+      .text(width / 2, shortLandscape ? height - 65 : mobile ? height - 116 : height - 42, '', {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: mobile ? '13px' : '15px',
         color: '#25313b',
@@ -281,14 +345,22 @@ export class PatternGame extends Scene {
     }
   }
 
-  private layoutBoard(mobile: boolean): void {
+  private layoutBoard(mobile: boolean, shortLandscape: boolean): void {
     const width = this.scale.width;
     const height = this.scale.height;
-    const headerReserve = mobile ? 138 : 144;
+    const headerReserve = mobile ? 174 : 178;
     const footerReserve = mobile ? 136 : 108;
     let rawBoardSize: number;
 
-    if (mobile) {
+    if (shortLandscape) {
+      rawBoardSize = Math.max(
+        150,
+        Math.min(width - 30, height - 210, 260)
+      );
+      this.boardSize = snapBoardSize(rawBoardSize);
+      this.boardX = Math.round((width - this.boardSize) / 2);
+      this.boardY = 128;
+    } else if (mobile) {
       rawBoardSize = Math.max(
         245,
         Math.min(width - 28, height - headerReserve - footerReserve, 360)
@@ -313,79 +385,30 @@ export class PatternGame extends Scene {
     this.tileSize = this.boardSize / BOARD_DIMENSION;
   }
 
-  private drawGameBackdrop(width: number, height: number): void {
-    const graphics = this.add.graphics();
-    graphics.fillGradientStyle(0xfff1b8, 0xc8f4ff, 0xd5ffc7, 0xffc7e7, 1);
-    graphics.fillRect(0, 0, width, height);
-
-    const tile = Math.max(34, Math.min(58, Math.floor(width / 15)));
-    const gap = 8;
-    const startX = -tile;
-    const startY = -tile;
-    const colors = [
-      COLORS.paper,
-      COLORS.paper,
-      COLORS.paper,
-      COLORS.blue,
-      COLORS.orange,
-      COLORS.red,
-    ];
-
-    for (let y = startY; y < height + tile; y += tile + gap) {
-      for (let x = startX; x < width + tile; x += tile + gap) {
-        const value =
-          Math.abs(Math.floor(x / 13) + Math.floor(y / 17)) % colors.length;
-        const color = colors[value] ?? COLORS.paper;
-        const alpha = color === COLORS.paper ? 0.3 : 0.2;
-
-        graphics.fillStyle(color, alpha);
-        graphics.fillRoundedRect(x, y, tile, tile, 7);
-        graphics.lineStyle(1, COLORS.line, 0.08);
-        graphics.strokeRoundedRect(x, y, tile, tile, 7);
-      }
+  private drawDailyHeader(mobile: boolean, shortLandscape: boolean): void {
+    if (!this.session) {
+      return;
     }
+    const y = shortLandscape ? 57 : mobile ? 76 : 78;
+    drawHeaderChip(
+      this,
+      this.scale.width / 2 - 55,
+      y,
+      `Daily #${this.session.puzzleId.puzzleNumber}`,
+      TILE_WARS_COLORS.blue,
+      98
+    );
+    drawHeaderChip(
+      this,
+      this.scale.width / 2 + 55,
+      y,
+      `🔥 ${this.progress?.dailyStreak ?? 0}`,
+      TILE_WARS_COLORS.orange,
+      70
+    );
   }
 
-  private drawTileTitle(x: number, y: number, mobile: boolean): void {
-    const letters = ['T', 'I', 'L', 'E', 'W', 'A', 'R', 'S'];
-    const colors = [
-      COLORS.green,
-      COLORS.red,
-      COLORS.blue,
-      COLORS.orange,
-      COLORS.blue,
-      COLORS.orange,
-      COLORS.green,
-      COLORS.red,
-    ];
-    const size = mobile ? 31 : 38;
-    const gap = mobile ? 4 : 6;
-    const totalWidth = letters.length * size + (letters.length - 1) * gap;
-    const left = x - totalWidth / 2;
-    const graphics = this.add.graphics();
-
-    letters.forEach((letter, index) => {
-      const tileX = left + index * (size + gap);
-      const color = colors[index] ?? COLORS.green;
-      graphics.fillStyle(COLORS.shadow, 0.2);
-      graphics.fillRoundedRect(tileX + 3, y - size / 2 + 4, size, size, 6);
-      graphics.fillStyle(color, 1);
-      graphics.fillRoundedRect(tileX, y - size / 2, size, size, 6);
-      graphics.lineStyle(2, COLORS.line, 0.72);
-      graphics.strokeRoundedRect(tileX, y - size / 2, size, size, 6);
-
-      this.add
-        .text(tileX + size / 2, y, letter, {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: `${Math.floor(size * 0.58)}px`,
-          color: '#ffffff',
-          resolution: TEXT_RESOLUTION,
-        })
-        .setOrigin(0.5);
-    });
-  }
-
-  private drawStatsHud(mobile: boolean): void {
+  private drawStatsHud(mobile: boolean, shortLandscape: boolean): void {
     if (!this.session) {
       return;
     }
@@ -397,117 +420,25 @@ export class PatternGame extends Scene {
     const totalTiles =
       this.session.totalTiles || this.pattern.length || Math.max(remaining, 1);
     const foundTiles = Math.max(0, totalTiles - remaining);
-    this.drawScoreStrip(
-      this.boardX + this.boardSize / 2,
-      mobile ? 86 : 88,
+    drawGameplayStatsHud(this, {
+      centerX: this.boardX + this.boardSize / 2,
+      labelY: shortLandscape ? 82 : mobile ? 106 : 108,
+      tileY: shortLandscape ? 106 : mobile ? 135 : 139,
       totalTiles,
       foundTiles,
-      this.session.guesses.length,
-      mobile
-    );
+      guesses: this.session.guesses.length,
+      tileSize: shortLandscape ? 22 : mobile ? 28 : 32,
+      gap: shortLandscape ? 3 : mobile ? 4 : 5,
+      groupGap: shortLandscape ? 18 : mobile ? 24 : 34,
+    });
   }
 
-  private drawScoreStrip(
-    x: number,
-    y: number,
-    totalTiles: number,
-    foundTiles: number,
-    guesses: number,
-    mobile: boolean
-  ): void {
-    const count = Math.max(1, Math.min(8, totalTiles));
-    const tileSize = mobile ? 19 : 21;
-    const gap = mobile ? 4 : 5;
-    const guessSize = mobile ? 30 : 34;
-    const stripWidth = Math.min(this.boardSize, mobile ? 340 : 400);
-    const left = x - stripWidth / 2;
-    const right = x + stripWidth / 2;
-    const progressLeft = left + (mobile ? 2 : 4);
-    const guessX = right - guessSize / 2 - (mobile ? 2 : 4);
-    const tileY = y + 13;
-    const graphics = this.add.graphics();
-
-    this.add
-      .text(progressLeft, y - 13, 'TILES FOUND', {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: mobile ? '10px' : '11px',
-        color: '#25313b',
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0, 0.5);
-
-    this.add
-      .text(guessX, y - 13, 'GUESSES', {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: mobile ? '9px' : '10px',
-        color: '#25313b',
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5);
-
-    for (let index = 0; index < count; index += 1) {
-      const tileX = progressLeft + index * (tileSize + gap);
-      const lit = index < foundTiles;
-
-      graphics.fillStyle(COLORS.shadow, lit ? 0.22 : 0.1);
-      graphics.fillRoundedRect(
-        tileX + 2,
-        tileY - tileSize / 2 + 3,
-        tileSize,
-        tileSize,
-        5
-      );
-      graphics.fillStyle(lit ? COLORS.green : COLORS.paper, lit ? 1 : 0.8);
-      graphics.fillRoundedRect(
-        tileX,
-        tileY - tileSize / 2,
-        tileSize,
-        tileSize,
-        5
-      );
-      graphics.lineStyle(2, COLORS.line, lit ? 0.76 : 0.36);
-      graphics.strokeRoundedRect(
-        tileX,
-        tileY - tileSize / 2,
-        tileSize,
-        tileSize,
-        5
-      );
-
-    }
-
-    const guessTileX = guessX - guessSize / 2;
-    const guessTileY = tileY - guessSize / 2;
-
-    graphics.fillStyle(COLORS.shadow, 0.24);
-    graphics.fillRoundedRect(
-      guessTileX + 4,
-      guessTileY + 5,
-      guessSize,
-      guessSize,
-      8
-    );
-    graphics.fillStyle(COLORS.blue, 1);
-    graphics.fillRoundedRect(guessTileX, guessTileY, guessSize, guessSize, 8);
-    graphics.lineStyle(3, COLORS.line, 0.84);
-    graphics.strokeRoundedRect(guessTileX, guessTileY, guessSize, guessSize, 8);
-
-    this.add
-      .text(guessX, tileY + 1, guesses.toString(), {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: guesses > 99 ? '15px' : mobile ? '18px' : '20px',
-        color: '#ffffff',
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5);
-  }
-
-  private drawGameToolbar(mobile: boolean): void {
+  private drawGameToolbar(mobile: boolean, shortLandscape: boolean): void {
     const width = this.scale.width;
     const height = this.scale.height;
 
-    if (mobile) {
-      const y = height - 58;
+    if (mobile || shortLandscape) {
+      const y = shortLandscape ? height - 24 : height - 58;
       this.createButton(
         width / 2 - 118,
         y,
@@ -520,7 +451,7 @@ export class PatternGame extends Scene {
       this.createButton(
         width / 2,
         y,
-        '? Clues',
+        'Help',
         () => {
           this.modal = 'clues';
           this.renderScreen();
@@ -530,7 +461,7 @@ export class PatternGame extends Scene {
       this.createButton(
         width / 2 + 118,
         y,
-        `X ${this.markerMode ? 'On' : 'Off'}`,
+        `X ${this.markerMode ? 'ON' : 'OFF'}`,
         () => {
           this.markerMode = !this.markerMode;
           this.currentStatus = this.markerMode
@@ -556,7 +487,7 @@ export class PatternGame extends Scene {
     this.createButton(
       width / 2,
       y,
-      '? Clues',
+      'Help',
       () => {
         this.modal = 'clues';
         this.renderScreen();
@@ -566,7 +497,7 @@ export class PatternGame extends Scene {
     this.createButton(
       width / 2 + 158,
       y,
-      this.markerMode ? 'X on' : 'X off',
+      this.markerMode ? 'X ON' : 'X OFF',
       () => {
         this.markerMode = !this.markerMode;
         this.currentStatus = this.markerMode
@@ -640,8 +571,9 @@ export class PatternGame extends Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     const mobile = width < 760;
-    const modalWidth = Math.min(width - 28, mobile ? 370 : 440);
-    const modalHeight = Math.min(height - 42, mobile ? 426 : 398);
+    const shortLandscape = width >= 600 && height < 500;
+    const modalWidth = Math.min(width - 24, shortLandscape ? 760 : mobile ? 380 : 460);
+    const modalHeight = Math.min(height - 24, 520);
     const x = (width - modalWidth) / 2;
     const y = (height - modalHeight) / 2;
     const blocker = this.add
@@ -653,18 +585,15 @@ export class PatternGame extends Scene {
     const elapsed = formatElapsedTime(
       (this.session.solvedAt ?? Date.now()) - this.session.startedAt
     );
-    const saveStatus =
-      this.currentStatus === 'Result commented.' ||
-      this.currentStatus === 'Could not comment result.'
-        ? this.currentStatus
-        : this.session.puzzleId.mode === 'daily'
-          ? 'Daily result saved'
-          : 'Practice result';
-    const progressionStatus = this.dailyReward
-      ? `${saveStatus} · +${this.dailyReward.amount} XP`
-      : this.progress
-        ? `Level ${this.progress.level} · ${this.progress.levelXp}/${this.progress.xpForNextLevel} XP`
-        : saveStatus;
+    const earnedXp = this.dailyReward?.amount ??
+      (this.progress ? dailyXpForStreak(this.progress.dailyStreak) : 0);
+    const initialProgress =
+      this.progress && this.dailyReward
+        ? summarizeProgress({
+            ...this.progress,
+            totalXp: this.dailyReward.previousTotalXp,
+          })
+        : this.progress;
 
     blocker.on('pointerdown', () => undefined);
     this.trackInteractive(blocker);
@@ -679,7 +608,7 @@ export class PatternGame extends Scene {
     panel.strokeRoundedRect(x, y, modalWidth, modalHeight, 10);
 
     this.add
-      .text(width / 2, y + 42, 'Pattern complete', {
+      .text(width / 2, y + 32, 'Pattern Complete', {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: mobile ? '24px' : '28px',
         color: '#18212b',
@@ -690,10 +619,10 @@ export class PatternGame extends Scene {
     this.add
       .text(
         width / 2,
-        y + 72,
-        `${this.session.puzzleId.date} · ${
-          this.playerRank ? `Rank #${this.playerRank.rank}` : saveStatus
-        }`,
+        y + 59,
+        `Daily #${this.session.puzzleId.puzzleNumber} · ${formatDailyDate(
+          this.session.puzzleId.date
+        )} · ${this.playerRank ? `Rank #${this.playerRank.rank}` : 'Rank —'}`,
         {
           fontFamily: 'Arial Black, Arial, sans-serif',
           fontSize: '12px',
@@ -703,37 +632,54 @@ export class PatternGame extends Scene {
       )
       .setOrigin(0.5);
 
-    const statY = y + 121;
+    const summaryCenter = shortLandscape ? x + modalWidth * 0.25 : width / 2;
+    const summaryWidth = shortLandscape ? modalWidth * 0.46 : modalWidth;
+    const statY = y + 99;
     this.drawResultMetric(
-      width / 2 - modalWidth * 0.2,
+      summaryCenter - summaryWidth * 0.2,
       statY,
       'Guesses',
       this.session.guesses.length.toString()
     );
-    this.drawResultMetric(width / 2 + modalWidth * 0.2, statY, 'Time', elapsed);
+    this.drawResultMetric(summaryCenter + summaryWidth * 0.2, statY, 'Time', elapsed);
 
-    this.add
-      .text(width / 2, y + 172, progressionStatus, {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '13px',
-        color: '#53606b',
-        align: 'center',
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5);
-
-    if (this.progress) {
-      this.drawResultProgressBar(x + 24, y + 188, modalWidth - 48);
+    if (initialProgress) {
+      this.add
+        .text(summaryCenter, y + 145, `Level ${initialProgress.level}`, {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: '15px',
+          color: '#25313b',
+        })
+        .setName('result-level-label')
+        .setOrigin(0.5);
+      this.add
+        .text(
+          summaryCenter,
+          y + 167,
+          `${initialProgress.levelXp}/${initialProgress.xpForNextLevel} XP · +${earnedXp} XP earned`,
+          {
+            fontFamily: 'Arial Black, Arial, sans-serif',
+            fontSize: mobile ? '11px' : '12px',
+            color: '#53606b',
+          }
+        )
+        .setName('result-xp-label')
+        .setOrigin(0.5);
+      this.drawResultProgressBar(
+        x + 24,
+        y + 181,
+        shortLandscape ? modalWidth * 0.46 - 48 : modalWidth - 48
+      );
     }
 
     this.drawResultLeaderboard(
-      x + 24,
-      y + (this.progress ? 216 : 198),
-      modalWidth - 48
+      shortLandscape ? x + modalWidth * 0.52 : x + 24,
+      shortLandscape ? y + 92 : y + 211,
+      shortLandscape ? modalWidth * 0.45 : modalWidth - 48
     );
 
     this.createButton(
-      width / 2 - 76,
+      summaryCenter - 76,
       y + modalHeight - 34,
       'Close',
       () => {
@@ -743,18 +689,14 @@ export class PatternGame extends Scene {
       'dark'
     );
     this.createButton(
-      width / 2 + 76,
+      summaryCenter + 76,
       y + modalHeight - 34,
       'Comment',
       () => {
         void this.commentResult();
       },
-      'green'
+      'reddit'
     );
-
-    if (this.dailyReward) {
-      void this.acknowledgeDailyReward(this.dailyReward.rewardId);
-    }
   }
 
   private drawResultMetric(
@@ -783,10 +725,10 @@ export class PatternGame extends Scene {
 
   private drawResultLeaderboard(x: number, y: number, width: number): void {
     const graphics = this.add.graphics();
-    const entries = this.leaderboard.slice(0, 3);
+    const rows = selectLeaderboardDisplayRows(this.leaderboard, this.playerRank);
 
     this.add
-      .text(x, y, 'Daily leaders', {
+      .text(x, y, 'Daily Leaderboard', {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: '13px',
         color: '#25313b',
@@ -794,7 +736,7 @@ export class PatternGame extends Scene {
       })
       .setOrigin(0, 0.5);
 
-    if (entries.length === 0) {
+    if (rows.length === 0) {
       this.add
         .text(x, y + 34, 'Leaderboard appears after Reddit playtest saves.', {
           fontFamily: 'Arial Black, Arial, sans-serif',
@@ -807,27 +749,44 @@ export class PatternGame extends Scene {
       return;
     }
 
-    entries.forEach((entry, index) => {
-      const rowY = y + 28 + index * 36;
+    rows.forEach((row, index) => {
+      const rowY = y + 24 + index * 28;
+      if (row.kind === 'ellipsis') {
+        this.add
+          .text(x + width / 2, rowY, '…', {
+            fontFamily: 'Arial Black, Arial, sans-serif',
+            fontSize: '16px',
+            color: '#667380',
+          })
+          .setOrigin(0.5);
+        return;
+      }
+      const entry = row.entry;
       graphics.fillStyle(0xffffff, 0.62);
-      graphics.fillRoundedRect(x, rowY - 15, width, 30, 7);
+      graphics.fillRoundedRect(x, rowY - 12, width, 24, 6);
       graphics.lineStyle(1, COLORS.line, 0.14);
-      graphics.strokeRoundedRect(x, rowY - 15, width, 30, 7);
-      graphics.fillStyle(COLORS.green, 1);
-      graphics.fillRoundedRect(x + 8, rowY - 11, 22, 22, 5);
+      graphics.strokeRoundedRect(x, rowY - 12, width, 24, 6);
+      const rankColors = {
+        green: COLORS.green,
+        red: COLORS.red,
+        blue: COLORS.blue,
+        orange: COLORS.orange,
+      };
+      graphics.fillStyle(rankColors[leaderboardRankColor(entry.rank)], 1);
+      graphics.fillRoundedRect(x + 5, rowY - 9, 18, 18, 4);
 
       this.add
-        .text(x + 19, rowY, entry.rank.toString(), {
+        .text(x + 14, rowY, entry.rank.toString(), {
           fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '12px',
+          fontSize: '10px',
           color: '#ffffff',
           resolution: TEXT_RESOLUTION,
         })
         .setOrigin(0.5);
       this.add
-        .text(x + 40, rowY, entry.displayName, {
+        .text(x + 30, rowY, truncateDisplayName(entry.displayName, width < 330 ? 15 : 23), {
           fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '12px',
+          fontSize: '10px',
           color: '#25313b',
           resolution: TEXT_RESOLUTION,
         })
@@ -835,7 +794,7 @@ export class PatternGame extends Scene {
       this.add
         .text(x + width - 10, rowY, `${entry.guesses} guesses`, {
           fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '11px',
+          fontSize: '10px',
           color: '#667380',
           resolution: TEXT_RESOLUTION,
         })
@@ -844,86 +803,7 @@ export class PatternGame extends Scene {
   }
 
   private drawClueModal(): void {
-    const width = this.scale.width;
-    const height = this.scale.height;
-    const modalWidth = Math.min(width - 32, 390);
-    const modalHeight = Math.min(height - 44, 350);
-    const x = (width - modalWidth) / 2;
-    const y = (height - modalHeight) / 2;
-    const blocker = this.add
-      .zone(0, 0, width, height)
-      .setOrigin(0)
-      .setInteractive({ useHandCursor: false });
-    const overlay = this.add.graphics();
-    const panel = this.add.graphics();
-
-    blocker.on('pointerdown', () => undefined);
-    this.trackInteractive(blocker);
-
-    overlay.fillStyle(0x111820, 0.44);
-    overlay.fillRect(0, 0, width, height);
-    panel.fillStyle(COLORS.shadow, 0.24);
-    panel.fillRoundedRect(x + 8, y + 10, modalWidth, modalHeight, 8);
-    panel.fillStyle(COLORS.panel, 1);
-    panel.fillRoundedRect(x, y, modalWidth, modalHeight, 8);
-    panel.lineStyle(3, COLORS.line, 1);
-    panel.strokeRoundedRect(x, y, modalWidth, modalHeight, 8);
-
-    this.add
-      .text(width / 2, y + 30, 'Clue Tiles', {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '23px',
-        color: '#18212b',
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5);
-
-    const rows = [
-      {
-        label: 'Green - Pattern tile',
-        clue: { green: true, red: 0, blue: 0, orange: 0 },
-        marker: false,
-      },
-      {
-        label: 'Red vertical · Same column',
-        clue: { green: false, red: 1, blue: 0, orange: 0 },
-        marker: false,
-      },
-      {
-        label: 'Blue horizontal · Same row',
-        clue: { green: false, red: 0, blue: 1, orange: 0 },
-        marker: false,
-      },
-      {
-        label: 'Orange X · Diagonal',
-        clue: { green: false, red: 0, blue: 0, orange: 1 },
-        marker: false,
-      },
-      {
-        label: 'Mark as no-guess',
-        clue: { green: false, red: 0, blue: 0, orange: 0 },
-        marker: true,
-      },
-    ] satisfies {
-      label: string;
-      clue: StoredGuess['clue'];
-      marker: boolean;
-    }[];
-
-    rows.forEach((row, index) => {
-      const rowY = y + 76 + index * 42;
-      this.drawClueSample(x + 42, rowY, 28, row.clue, row.marker);
-      this.add
-        .text(x + 80, rowY, row.label, {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '16px',
-          color: '#25313b',
-          resolution: TEXT_RESOLUTION,
-        })
-        .setOrigin(0, 0.5);
-    });
-
-    this.createButton(width / 2, y + modalHeight - 34, 'Close', () => {
+    drawHowToPlayModal(this, () => {
       this.modal = 'none';
       this.renderScreen();
     });
@@ -933,23 +813,76 @@ export class PatternGame extends Scene {
     if (!this.progress) {
       return;
     }
-    const ratio = Math.min(
-      1,
-      this.progress.levelXp / this.progress.xpForNextLevel
-    );
     const background = this.add.graphics();
     background.fillStyle(0xd8d0c5, 1);
     background.fillRoundedRect(x, y, width, 12, 6);
+    background.lineStyle(1, COLORS.line, 0.28);
+    background.strokeRoundedRect(x, y, width, 12, 6);
     const fill = this.add
-      .rectangle(x, y + 6, width * ratio, 10, 0x43c978)
-      .setOrigin(0, 0.5)
-      .setScale(0, 1);
-    this.tweens.add({
-      targets: fill,
-      scaleX: 1,
-      duration: 650,
-      ease: 'Sine.easeOut',
-    });
+      .rectangle(x, y + 6, width, 10, COLORS.green)
+      .setOrigin(0, 0.5);
+    const reward = this.dailyReward;
+    const levelLabel = this.children.getByName('result-level-label');
+    const xpLabel = this.children.getByName('result-xp-label');
+
+    if (!reward || this.acknowledgedRewardIds.has(reward.rewardId)) {
+      fill.setScale(
+        Math.min(1, this.progress.levelXp / this.progress.xpForNextLevel),
+        1
+      );
+      return;
+    }
+
+    const segments = buildXpAnimationSegments(
+      reward.previousTotalXp,
+      reward.newTotalXp
+    );
+    const animateSegment = (index: number): void => {
+      const segment = segments[index];
+      if (!segment) {
+        if (levelLabel instanceof GameObjects.Text) {
+          levelLabel.setText(`Level ${this.progress?.level ?? 1}`);
+        }
+        if (xpLabel instanceof GameObjects.Text && this.progress) {
+          xpLabel.setText(
+            `${this.progress.levelXp}/${this.progress.xpForNextLevel} XP · +${reward.amount} XP earned`
+          );
+        }
+        void this.acknowledgeDailyReward(reward.rewardId);
+        return;
+      }
+      if (levelLabel instanceof GameObjects.Text) {
+        levelLabel.setText(`Level ${segment.level}`);
+      }
+      fill.setScale(segment.fromXp / segment.xpForNextLevel, 1);
+      this.tweens.add({
+        targets: fill,
+        scaleX: segment.toXp / segment.xpForNextLevel,
+        duration: 650,
+        ease: 'Sine.easeOut',
+        onUpdate: () => {
+          if (xpLabel instanceof GameObjects.Text) {
+            const shownXp = Math.round(segment.xpForNextLevel * fill.scaleX);
+            xpLabel.setText(
+              `${shownXp}/${segment.xpForNextLevel} XP · +${reward.amount} XP earned`
+            );
+          }
+        },
+        onComplete: () => {
+          if (segment.completesLevel) {
+            this.tweens.add({
+              targets: levelLabel instanceof GameObjects.Text ? levelLabel : fill,
+              scaleX: 1.12,
+              scaleY: 1.12,
+              yoyo: true,
+              duration: 150,
+            });
+          }
+          animateSegment(index + 1);
+        },
+      });
+    };
+    animateSegment(0);
   }
 
   private async acknowledgeDailyReward(rewardId: string): Promise<void> {
@@ -957,7 +890,6 @@ export class PatternGame extends Scene {
       return;
     }
     this.acknowledgedRewardIds.add(rewardId);
-    await new Promise((resolve) => window.setTimeout(resolve, 800));
     try {
       const response = await fetch('/api/progress/rewards/ack', {
         method: 'POST',
@@ -969,41 +901,6 @@ export class PatternGame extends Scene {
       }
     } catch {
       this.acknowledgedRewardIds.delete(rewardId);
-    }
-  }
-
-  private drawClueSample(
-    x: number,
-    y: number,
-    size: number,
-    clue: StoredGuess['clue'],
-    marker: boolean
-  ): void {
-    const graphics = this.add.graphics();
-    const radius = 6;
-
-    graphics.fillStyle(clue.green ? COLORS.green : COLORS.paper, 1);
-    graphics.fillRoundedRect(x - size / 2, y - size / 2, size, size, radius);
-    this.drawCluePattern(
-      graphics,
-      x - size / 2,
-      y - size / 2,
-      size,
-      radius,
-      clue
-    );
-    graphics.lineStyle(2, COLORS.line, 0.85);
-    graphics.strokeRoundedRect(x - size / 2, y - size / 2, size, size, radius);
-    if (marker) {
-      this.add
-        .text(x, y, 'X', {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '21px',
-          color: '#25313b',
-          resolution: TEXT_RESOLUTION,
-        })
-        .setOrigin(0.5)
-        .setAngle(0);
     }
   }
 
@@ -1030,76 +927,17 @@ export class PatternGame extends Scene {
     label: string,
     onClick: (pointer: Input.Pointer) => void,
     variant: ButtonVariant = 'dark'
-  ): GameObjects.Text {
-    const backgroundColor = this.buttonColor(variant);
-    const hoverColor = this.buttonHoverColor(variant);
-    const button = this.add
-      .text(x, y, label, {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '15px',
-        color: '#ffffff',
-        backgroundColor,
-        padding: { left: 13, right: 13, top: 9, bottom: 9 },
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
-
-    button.on('pointerover', () => {
-      button.setStyle({ backgroundColor: hoverColor });
-      this.tweens.add({
-        targets: button,
-        y: y - 2,
-        duration: 90,
-        ease: 'Sine.easeOut',
-      });
-    });
-    button.on('pointerout', () => {
-      button.setStyle({ backgroundColor });
-      this.tweens.add({
-        targets: button,
-        y,
-        duration: 90,
-        ease: 'Sine.easeOut',
-      });
-    });
-    button.on('pointerdown', (pointer: Input.Pointer) => {
-      this.tweens.add({
-        targets: button,
-        scaleX: 0.94,
-        scaleY: 0.94,
-        yoyo: true,
-        duration: 80,
-        ease: 'Sine.easeInOut',
-      });
-      onClick(pointer);
+  ): GameObjects.Container {
+    const button = drawTileButton(this, {
+      x,
+      y,
+      label,
+      variant,
+      fontSize: 14,
+      onClick,
     });
     this.trackInteractive(button);
     return button;
-  }
-
-  private buttonColor(variant: ButtonVariant): string {
-    const colors: Record<ButtonVariant, string> = {
-      dark: '#25313b',
-      blue: '#2577ff',
-      green: '#16a66a',
-      orange: '#f28d13',
-      red: '#df4758',
-    };
-
-    return colors[variant];
-  }
-
-  private buttonHoverColor(variant: ButtonVariant): string {
-    const colors: Record<ButtonVariant, string> = {
-      dark: '#354555',
-      blue: '#339dff',
-      green: '#27bf7d',
-      orange: '#ffad2d',
-      red: '#ff5365',
-    };
-
-    return colors[variant];
   }
 
   private openHomeScreen(pointer: Input.Pointer): void {
@@ -1139,14 +977,30 @@ export class PatternGame extends Scene {
   }
 
   private handleTile(coord: Coord): void {
-    if (!this.session || this.dailyUpdateInFlight) {
+    if (!this.session) {
       return;
     }
 
     const key = coordKey(coord);
 
     if (this.markerMode) {
+      if (this.dailyUpdateInFlight) {
+        return;
+      }
       void this.toggleActiveMarker(coord);
+      return;
+    }
+
+    if (this.dailyUpdateInFlight) {
+      return;
+    }
+
+    if (this.markerQueue.hasPendingWrites) {
+      this.markerQueue.queueGuess(coord);
+      this.pendingTileKey = key;
+      this.currentStatus = 'Checking tile...';
+      this.redrawGame();
+      this.setGameStatus(this.currentStatus);
       return;
     }
 
@@ -1193,7 +1047,12 @@ export class PatternGame extends Scene {
     }
 
     if (this.session.puzzleId.mode === 'daily' && this.pattern.length === 0) {
-      await this.postDailyUpdate('/api/daily/mark', { coord });
+      this.session = toggleMarkerInSession(this.session, coord);
+      this.markerQueue.enqueueMarker(coord);
+      this.currentStatus = 'X note updated.';
+      this.lastGuessKey = coordKey(coord);
+      this.renderScreen();
+      void this.processDailyMarkerQueue();
       return;
     }
 
@@ -1201,6 +1060,60 @@ export class PatternGame extends Scene {
     this.currentStatus = 'X mark updated.';
     this.lastGuessKey = coordKey(coord);
     this.renderScreen();
+  }
+
+  private async processDailyMarkerQueue(): Promise<void> {
+    const coord = this.markerQueue.beginNextWrite();
+    if (!coord) {
+      return;
+    }
+    try {
+      const response = await fetch('/api/daily/mark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coord }),
+      });
+      if (!response.ok) {
+        throw new Error(`Daily marker failed: ${response.status}`);
+      }
+      const data = toDailySessionResponse(await response.json());
+      if (!data) {
+        throw new Error('Daily marker response was invalid.');
+      }
+      this.markerQueue.settleCurrentWrite();
+      this.applyDailyResponse(data);
+      this.confirmedSession = data.session;
+      this.reapplyPendingMarkers();
+    } catch (error) {
+      console.error('Daily marker update failed:', error);
+      this.markerQueue.settleCurrentWrite();
+      this.session = this.confirmedSession;
+      this.reapplyPendingMarkers();
+      this.currentStatus = 'Couldn’t save that X—try again.';
+    } finally {
+      if (this.scene.isActive()) {
+        this.renderScreen();
+      }
+      if (this.markerQueue.hasPendingWrites) {
+        void this.processDailyMarkerQueue();
+      } else {
+        const guess = this.markerQueue.takeQueuedGuess();
+        if (guess) {
+          this.pendingTileKey = null;
+          void this.submitActiveGuess(guess);
+        }
+      }
+    }
+  }
+
+  private reapplyPendingMarkers(): void {
+    if (!this.confirmedSession) {
+      return;
+    }
+    this.session = replayPendingMarkerOperations(
+      this.confirmedSession,
+      this.markerQueue.pendingOperations
+    );
   }
 
   private async postDailyUpdate(
@@ -1225,13 +1138,16 @@ export class PatternGame extends Scene {
         throw new Error('Daily update response was invalid.');
       }
       this.applyDailyResponse(data);
+      this.confirmedSession = data.session;
       if (url.endsWith('/guess')) {
         const lastGuess = data.session.guesses.at(-1);
         this.lastGuessKey = lastGuess ? coordKey(lastGuess.coord) : null;
       }
       this.currentStatus = data.session.solved
         ? `Solved in ${data.session.guesses.length} guesses.`
-        : 'Daily progress saved.';
+        : data.session.guesses.at(-1)?.wasGreen
+          ? 'Pattern tile found—keep going!'
+          : 'Clue revealed—choose your next tile.';
       if (data.session.solved) {
         this.pendingTileKey = null;
         this.showSolvedPatternReveal();
@@ -1624,4 +1540,20 @@ const formatElapsedTime = (durationMs: number): string => {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+};
+
+const formatDailyDate = (date: string): string => {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime())
+    ? date
+    : new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC',
+      }).format(parsed);
+};
+
+const truncateDisplayName = (name: string, maxLength: number): string => {
+  return name.length <= maxLength ? name : `${name.slice(0, maxLength - 1)}…`;
 };

@@ -36,6 +36,10 @@
 
       <nav class="menu-actions" aria-label="Game modes">
         <button class="mode-button primary" id="daily-button" type="button">
+          <span class="daily-badges" aria-label="Daily challenge status">
+            <span class="daily-badge daily-number" id="daily-number">#1</span>
+            <span class="daily-badge daily-streak" id="daily-streak">🔥 0</span>
+          </span>
           <span class="button-kicker">Play now</span>
           <span class="button-label">Daily Challenge</span>
         </button>
@@ -62,15 +66,14 @@
           >
             x
           </button>
-          <p class="panel-kicker">Rankings</p>
-          <h2 id="leaderboard-title">Daily Leaders</h2>
+          <h2 id="leaderboard-title">Daily Leaderboard</h2>
           <ol
             class="leaderboard-list"
             id="leaderboard-list"
             aria-label="Daily leaderboard"
           >
             <li class="leaderboard-message">
-              <span class="player">Open to load today's rankings</span>
+              <span class="player">Open to load today's leaderboard</span>
             </li>
           </ol>
         </section>

@@ -84,6 +84,7 @@ export type VersusInviteSummary = {
   inviteCode: string;
   creatorDisplayName: string;
   acceptedByDisplayName: string | null;
+  createdAt: number;
   status:
     | 'open'
     | 'accepted-awaiting-pattern'
@@ -129,6 +130,11 @@ export type VersusSessionResponse = {
   match: VersusMatchSummary;
 };
 
+export type VersusResultResponse = {
+  type: 'versus-result';
+  match: VersusMatchSummary;
+};
+
 export type VersusPatternRequest = {
   pattern: Coord[];
 };
@@ -151,10 +157,8 @@ export type VersusShareData = {
 };
 
 export type VersusLobbySections = {
-  actionItems: VersusPendingItem[];
-  playableMatches: VersusMatchSummary[];
-  waitingItems: VersusPendingItem[];
-  waitingMatches: VersusMatchSummary[];
+  activeMatches: VersusMatchSummary[];
+  invitations: VersusPendingItem[];
   resultMatches: VersusMatchSummary[];
 };
 
@@ -303,30 +307,33 @@ export const parseVersusShareUrl = (
 export const organizeVersusLobby = (
   lobby: Pick<VersusLobbyResponse, 'matches' | 'pendingItems'>
 ): VersusLobbySections => {
-  const actionItems = lobby.pendingItems.filter((item) =>
+  const matchPriority = (match: VersusMatchSummary): number =>
+    match.myAttemptStatus === 'playing'
+      ? 0
+      : match.myAttemptStatus === 'not-started'
+        ? 1
+        : 2;
+  const invitationNeedsAction = (item: VersusPendingItem): boolean =>
     item.kind === 'invite'
       ? item.invite.role === 'acceptor'
-      : item.rematch.role === 'responder'
-  );
-  const waitingItems = lobby.pendingItems.filter(
-    (item) => !actionItems.includes(item)
-  );
-  const pendingSourceIds = new Set(
-    lobby.pendingItems.flatMap((item) =>
-      item.kind === 'rematch' ? [item.rematch.sourceMatchId] : []
-    )
-  );
+      : item.rematch.role === 'responder';
+  const invitationCreatedAt = (item: VersusPendingItem): number =>
+    item.kind === 'invite' ? item.invite.createdAt : item.rematch.createdAt;
   return {
-    actionItems,
-    playableMatches: lobby.matches.filter(
-      (match) => match.status === 'active' && match.myAttemptStatus !== 'solved'
-    ),
-    waitingItems,
-    waitingMatches: lobby.matches.filter(
-      (match) => match.status === 'active' && match.myAttemptStatus === 'solved'
+    activeMatches: lobby.matches
+      .filter((match) => match.status === 'active')
+      .sort(
+        (first, second) =>
+          matchPriority(first) - matchPriority(second) ||
+          second.createdAt - first.createdAt
+      ),
+    invitations: [...lobby.pendingItems].sort(
+      (first, second) =>
+        Number(invitationNeedsAction(second)) - Number(invitationNeedsAction(first)) ||
+        invitationCreatedAt(second) - invitationCreatedAt(first)
     ),
     resultMatches: lobby.matches.filter(
-      (match) => match.status !== 'active' && !pendingSourceIds.has(match.matchId)
-    ),
+      (match) => match.status !== 'active'
+    ).sort((first, second) => second.createdAt - first.createdAt),
   };
 };

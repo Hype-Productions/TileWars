@@ -1,25 +1,36 @@
 import { GameObjects, Scene, Time } from 'phaser';
-import type { PlayerSession } from '../../shared/game';
+import { toggleMarkerInSession, type PlayerSession } from '../../shared/game';
+import {
+  SerializedMarkerQueue,
+  replayPendingMarkerOperations,
+} from '../../shared/markerSync';
 import {
   type Coord,
   coordKey,
 } from '../../shared/pattern';
 import type { VersusMatchSummary } from '../../shared/versus';
+import type { PlayerProgressSummary, ProgressReward } from '../../shared/progression';
 import {
+  getProgress,
   getVersusSession,
   postVersusSession,
   VersusClientError,
 } from '../versusClient';
 import {
   TILE_WARS_COLORS,
+  clearSceneContent,
+  drawGameplayStatsHud,
+  drawPlainRivalryRecord,
+  drawHowToPlayModal,
   drawRaisedPanel,
-  drawTileHeading,
-  drawTileWarsBackdrop,
+  drawTileButton,
+  ensureTileWarsSceneShell,
+  type TileWarsSceneShell,
 } from './tileWarsTheme';
 
 type VersusGameData = { matchId: string };
 type ColorName = 'red' | 'blue' | 'orange';
-type Modal = 'none' | 'clues' | 'finished';
+type Modal = 'none' | 'help' | 'finished';
 type ButtonVariant = 'dark' | 'blue' | 'green' | 'orange' | 'red';
 type TileView = {
   coord: Coord;
@@ -41,6 +52,8 @@ export class VersusGame extends Scene {
   private markerMode = false;
   private pendingTileKey: string | null = null;
   private updateInFlight = false;
+  private confirmedSession: PlayerSession | null = null;
+  private markerQueue = new SerializedMarkerQueue();
   private modal: Modal = 'none';
   private status = 'Loading opponent pattern...';
   private boardSize = 360;
@@ -50,6 +63,9 @@ export class VersusGame extends Scene {
   private serverNowAtSync = 0;
   private clientNowAtSync = 0;
   private clockEvent: Time.TimerEvent | null = null;
+  private sceneShell: TileWarsSceneShell | null = null;
+  private progress: PlayerProgressSummary | null = null;
+  private reward: ProgressReward | null = null;
 
   constructor() {
     super('VersusGame');
@@ -61,11 +77,14 @@ export class VersusGame extends Scene {
     this.match = null;
     this.markerMode = false;
     this.pendingTileKey = null;
+    this.confirmedSession = null;
+    this.markerQueue.reset();
     this.modal = 'none';
     this.status = 'Loading opponent pattern...';
   }
 
   create(): void {
+    this.sceneShell = null;
     this.cameras.main.setBackgroundColor(0xf6f0e8);
     this.scale.on('resize', this.handleResize, this);
     this.events.once('shutdown', this.handleShutdown, this);
@@ -91,11 +110,17 @@ export class VersusGame extends Scene {
   private async loadSession(): Promise<void> {
     try {
       this.applyResponse(await getVersusSession(this.matchId));
+      this.confirmedSession = this.session;
       this.status = this.session?.solved
         ? 'Your answer is complete.'
-        : 'Find your opponent’s hidden pattern.';
+        : 'Tap a tile to make your guess.';
       if (this.session?.solved) {
-        this.modal = 'finished';
+        if (this.match?.status === 'active') {
+          this.modal = 'finished';
+        } else {
+          await this.openResolvedResult();
+          return;
+        }
       }
     } catch (error) {
       this.status = clientErrorMessage(error);
@@ -104,15 +129,18 @@ export class VersusGame extends Scene {
   }
 
   private render(): void {
-    this.tweens.killAll();
-    this.children.removeAll(true);
-    this.input.resetCursor();
+    clearSceneContent(this, this.sceneShell);
     this.tileViews = [];
     const width = this.scale.width;
     const height = this.scale.height;
     const mobile = width < 760;
-    drawTileWarsBackdrop(this, width, height);
-    drawTileHeading(this, 'Versus', width / 2, 34, mobile);
+    const shortLandscape = width >= 600 && height < 500;
+    this.sceneShell = ensureTileWarsSceneShell(this, this.sceneShell, {
+      width,
+      height,
+      headingY: shortLandscape ? 24 : 34,
+      mobile: mobile || shortLandscape,
+    });
 
     if (!this.session || !this.match) {
       this.add
@@ -135,7 +163,7 @@ export class VersusGame extends Scene {
     }
 
     this.add
-      .text(width / 2, 76, `vs ${this.match.opponentDisplayName}`, {
+      .text(width / 2, shortLandscape ? 54 : 74, `vs ${this.match.opponentDisplayName}`, {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: mobile ? '19px' : '23px',
         color: '#18212b',
@@ -143,7 +171,7 @@ export class VersusGame extends Scene {
       })
       .setOrigin(0.5);
     this.add
-      .text(width - 16, 34, '', {
+      .text(width - 16, shortLandscape ? 24 : 34, '', {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: mobile ? '13px' : '15px',
         color: '#ffffff',
@@ -153,63 +181,46 @@ export class VersusGame extends Scene {
       })
       .setName('versus-clock')
       .setOrigin(1, 0.5);
-    this.add
-      .text(width / 2, 120, this.statsText(), {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: mobile ? '12px' : '14px',
-        color: '#25313b',
-        backgroundColor: '#fff6dd',
-        padding: { left: 12, right: 12, top: 6, bottom: 6 },
-      })
-      .setOrigin(0.5);
-    this.add
-      .text(
-        width / 2,
-        98,
-        `You ${this.match.rivalry.wins} - ${this.match.rivalry.losses} ${this.match.opponentDisplayName}`,
-        {
-          fontFamily: 'Arial, sans-serif',
-          fontSize: mobile ? '12px' : '14px',
-          color: '#25313b',
-        }
-      )
-      .setOrigin(0.5);
+    const statY = shortLandscape ? 82 : 103;
+    drawPlainRivalryRecord(
+      this,
+      width / 2,
+      statY,
+      this.match.rivalry,
+      shortLandscape || mobile ? 12 : 14
+    );
 
-    this.layoutBoard(mobile);
+    this.layoutBoard(mobile, shortLandscape);
     this.createTiles();
-    if (mobile) {
-      this.createButton(width - 48, 92, 'Clues', () => {
-        this.modal = 'clues';
-        this.render();
-      }, 'blue');
-    } else {
-      this.drawRulesPanel();
-    }
+    this.drawStatsHud(mobile, shortLandscape);
 
-    const buttonY = mobile ? height - 30 : height - 42;
+    const buttonY = shortLandscape ? height - 24 : mobile ? height - 30 : height - 42;
     this.createButton(
       width / 2 - 124,
-      buttonY,
-      mobile ? this.shortModeLabel() : this.modeLabel(),
-      () => void this.changeMode(),
-      'blue'
-    );
-    this.createButton(
-      width / 2,
-      buttonY,
-      this.markerMode ? 'X on' : 'X off',
-      () => {
-        this.markerMode = !this.markerMode;
-        this.render();
-      },
-      this.markerMode ? 'green' : 'dark'
-    );
-    this.createButton(
-      width / 2 + 124,
       buttonY,
       'Lobby',
       () => this.scene.start('VersusLobby'),
       'orange'
+    );
+    this.createButton(
+      width / 2,
+      buttonY,
+      'Help',
+      () => {
+        this.modal = 'help';
+        this.render();
+      },
+      'blue'
+    );
+    this.createButton(
+      width / 2 + 124,
+      buttonY,
+      this.markerMode ? 'X ON' : 'X OFF',
+      () => {
+        this.markerMode = !this.markerMode;
+        this.render();
+      },
+      'dark'
     );
 
     this.add
@@ -224,40 +235,37 @@ export class VersusGame extends Scene {
 
     this.redrawTiles();
     this.updateClockText();
-    if (this.modal === 'clues') {
-      this.drawModal('Clues', [
-        'Green: tile is in the pattern',
-        'Red: same vertical column',
-        'Blue: same horizontal row',
-        'Orange: diagonal from a pattern tile',
-        'X mode: private no-guess notes',
-      ]);
+    if (this.modal === 'help') {
+      this.drawHelpModal();
     } else if (this.modal === 'finished') {
       this.drawFinishedModal();
     }
   }
 
-  private layoutBoard(mobile: boolean): void {
+  private layoutBoard(mobile: boolean, shortLandscape: boolean): void {
     const width = this.scale.width;
     const height = this.scale.height;
-    if (mobile) {
+    if (shortLandscape) {
       this.boardSize = snapBoardSize(
-        Math.max(225, Math.min(width - 26, height - 286, 360))
+        Math.max(150, Math.min(width - 30, height - 225, 260))
+      );
+      this.boardX = Math.round((width - this.boardSize) / 2);
+      this.boardY = 145;
+    } else if (mobile) {
+      this.boardSize = snapBoardSize(
+        Math.max(225, Math.min(width - 26, height - 316, 360))
       );
       this.boardX = Math.round((width - this.boardSize) / 2);
       this.boardY = Math.round(
-        Math.max(148, (height - this.boardSize) / 2 + 18)
+        Math.max(174, (height - this.boardSize) / 2 + 24)
       );
     } else {
-      const rulesWidth = 270;
       this.boardSize = snapBoardSize(
-        Math.max(320, Math.min(width - rulesWidth - 90, height - 185, 460))
+        Math.max(320, Math.min(width - 80, height - 300, 460))
       );
-      this.boardX = Math.round(
-        Math.max(28, (width - rulesWidth - this.boardSize) / 2)
-      );
+      this.boardX = Math.round((width - this.boardSize) / 2);
       this.boardY = Math.round(
-        Math.max(132, (height - this.boardSize) / 2 + 6)
+        Math.max(174, (height - this.boardSize) / 2 + 12)
       );
     }
     this.tileSize = this.boardSize / 5;
@@ -362,15 +370,32 @@ export class VersusGame extends Scene {
   }
 
   private handleTile(coord: Coord): void {
-    if (!this.session || this.updateInFlight || this.session.solved) {
+    if (!this.session || this.session.solved) {
       return;
     }
     const key = coordKey(coord);
     if (this.markerMode) {
-      void this.postUpdate('mark', { coord });
+      if (this.updateInFlight) {
+        return;
+      }
+      this.session = toggleMarkerInSession(this.session, coord);
+      this.markerQueue.enqueueMarker(coord);
+      this.status = 'X note updated.';
+      this.render();
+      void this.processMarkerQueue();
+      return;
+    }
+    if (this.updateInFlight) {
       return;
     }
     if (this.session.guesses.some((guess) => coordKey(guess.coord) === key)) {
+      return;
+    }
+    if (this.markerQueue.hasPendingWrites) {
+      this.markerQueue.queueGuess(coord);
+      this.pendingTileKey = key;
+      this.status = 'Checking tile...';
+      this.redrawTiles();
       return;
     }
     this.pendingTileKey = key;
@@ -379,13 +404,46 @@ export class VersusGame extends Scene {
     void this.postUpdate('guess', { coord });
   }
 
-  private async changeMode(): Promise<void> {
-    if (!this.session || this.updateInFlight) {
+  private async processMarkerQueue(): Promise<void> {
+    const coord = this.markerQueue.beginNextWrite();
+    if (!coord) {
       return;
     }
-    const clueMode =
-      this.session.clueMode === 'balanced' ? 'proximity' : 'balanced';
-    await this.postUpdate('mode', { clueMode });
+    try {
+      const response = await postVersusSession(this.matchId, 'mark', { coord });
+      this.markerQueue.settleCurrentWrite();
+      this.applyResponse(response);
+      this.confirmedSession = response.session;
+      this.reapplyPendingMarkers();
+    } catch (error) {
+      this.markerQueue.settleCurrentWrite();
+      this.session = this.confirmedSession;
+      this.reapplyPendingMarkers();
+      this.status = 'Couldn’t save that X—try again.';
+    } finally {
+      if (this.scene.isActive()) {
+        this.render();
+      }
+      if (this.markerQueue.hasPendingWrites) {
+        void this.processMarkerQueue();
+      } else {
+        const guess = this.markerQueue.takeQueuedGuess();
+        if (guess) {
+          this.pendingTileKey = null;
+          this.handleTile(guess);
+        }
+      }
+    }
+  }
+
+  private reapplyPendingMarkers(): void {
+    if (!this.confirmedSession) {
+      return;
+    }
+    this.session = replayPendingMarkerOperations(
+      this.confirmedSession,
+      this.markerQueue.pendingOperations
+    );
   }
 
   private async postUpdate(
@@ -398,15 +456,21 @@ export class VersusGame extends Scene {
     this.updateInFlight = true;
     try {
       this.applyResponse(await postVersusSession(this.matchId, action, body));
+      this.confirmedSession = this.session;
       this.status = this.session?.solved
-        ? 'Finished. Your opponent can now see your score.'
+        ? 'Pattern found!'
         : action === 'guess'
           ? this.session?.guesses.at(-1)?.wasGreen
             ? 'Pattern tile found.'
             : 'Clue added.'
           : 'Saved.';
       if (this.session?.solved) {
-        this.modal = 'finished';
+        if (this.match?.status === 'active') {
+          this.modal = 'finished';
+        } else {
+          await this.openResolvedResult();
+          return;
+        }
       }
     } catch (error) {
       this.status = clientErrorMessage(error);
@@ -428,15 +492,44 @@ export class VersusGame extends Scene {
     this.clientNowAtSync = Date.now();
   }
 
-  private statsText(): string {
-    if (!this.session) {
-      return '';
+  private async openResolvedResult(): Promise<void> {
+    if (!this.match) {
+      return;
     }
-    const remaining = Math.max(
-      0,
-      this.session.totalTiles - this.session.foundKeys.length
-    );
-    return `Remaining: ${remaining}   Guesses: ${this.session.guesses.length}`;
+    try {
+      const response = await getProgress();
+      this.progress = response.progress;
+      this.reward =
+        response.pendingRewards.find(
+          (reward) => reward.rewardId === `versus:${this.matchId}`
+        ) ?? null;
+    } catch {
+      this.progress = null;
+      this.reward = null;
+    }
+    this.scene.start('VersusResult', {
+      match: this.match,
+      ...(this.progress ? { progress: this.progress } : {}),
+      ...(this.reward ? { reward: this.reward } : {}),
+    });
+  }
+
+  private drawStatsHud(mobile: boolean, shortLandscape: boolean): void {
+    if (!this.session) {
+      return;
+    }
+    const tileSize = shortLandscape ? 22 : mobile ? 26 : 30;
+    drawGameplayStatsHud(this, {
+      centerX: this.scale.width / 2,
+      labelY: shortLandscape ? 105 : 132,
+      tileY: shortLandscape ? 128 : 157,
+      totalTiles: this.session.totalTiles,
+      foundTiles: this.session.foundKeys.length,
+      guesses: this.session.guesses.length,
+      tileSize,
+      gap: shortLandscape ? 3 : 4,
+      groupGap: shortLandscape ? 18 : mobile ? 22 : 30,
+    });
   }
 
   private updateClockText(): void {
@@ -450,37 +543,10 @@ export class VersusGame extends Scene {
     clock.setText(formatDuration(Math.max(0, end - this.session.startedAt)));
   }
 
-  private drawRulesPanel(): void {
-    const x = this.boardX + this.boardSize + 154;
-    const y = this.boardY + 24;
-    drawRaisedPanel(this, x - 138, y - 16, 276, 190, COLORS.blue);
-    this.add
-      .text(x, y, 'Clues', {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '18px',
-        color: '#18212b',
-      })
-      .setOrigin(0.5);
-    const rows: { label: string; color: number }[] = [
-      { label: 'Part of pattern', color: COLORS.green },
-      { label: 'Same column', color: COLORS.red },
-      { label: 'Same row', color: COLORS.blue },
-      { label: 'Diagonal', color: COLORS.orange },
-      { label: 'X mode is a private note', color: COLORS.line },
-    ];
-    rows.forEach((row, index) => {
-      const rowY = y + 32 + index * 28;
-      const left = x - 122;
-      const graphics = this.add.graphics();
-      graphics.fillStyle(row.color, 1);
-      graphics.fillRoundedRect(left, rowY - 8, 16, 16, 4);
-      this.add
-        .text(left + 26, rowY, row.label, {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '15px',
-          color: '#33404c',
-        })
-        .setOrigin(0, 0.5);
+  private drawHelpModal(): void {
+    drawHowToPlayModal(this, () => {
+      this.modal = 'none';
+      this.render();
     });
   }
 
@@ -489,15 +555,16 @@ export class VersusGame extends Scene {
       return;
     }
     const score = this.match.myScore;
-    const lines = [
-      score
-        ? `${score.guesses} guesses in ${formatDuration(score.durationMs)}`
-        : `${this.session.guesses.length} guesses`,
-      this.match.status === 'active'
-        ? 'Waiting for your opponent to answer.'
-        : `Result: ${this.match.outcome.replace('-', ' ')}`,
-    ];
-    this.drawModal('Answer submitted', lines, true);
+    const guesses = score?.guesses ?? this.session.guesses.length;
+    const timing = score ? ` (${formatDuration(score.durationMs)})` : '';
+    this.drawModal(
+      'Pattern Found!',
+      [
+        `You found ${this.match.opponentDisplayName}'s pattern in ${guesses} guesses${timing}.`,
+        `Your score is locked in; waiting for ${this.match.opponentDisplayName}.`,
+      ],
+      true
+    );
   }
 
   private drawModal(title: string, lines: string[], finished = false): void {
@@ -537,7 +604,7 @@ export class VersusGame extends Scene {
       })
       .setOrigin(0.5, 0);
     if (finished) {
-      this.createButton(width / 2, y + modalHeight - 34, 'Versus lobby', () => {
+      this.createButton(width / 2, y + modalHeight - 34, 'Lobby', () => {
         this.scene.start('VersusLobby');
       }, 'green');
     } else {
@@ -583,75 +650,20 @@ export class VersusGame extends Scene {
     }
   }
 
-  private modeLabel(): string {
-    return this.session?.clueMode === 'proximity'
-      ? 'Proximity clues'
-      : 'Balanced clues';
-  }
-
-  private shortModeLabel(): string {
-    return this.session?.clueMode === 'proximity' ? 'Proximity' : 'Balanced';
-  }
-
   private createButton(
     x: number,
     y: number,
     label: string,
     onClick: () => void,
     variant: ButtonVariant = 'dark'
-  ): GameObjects.Text {
-    const base = this.buttonColor(variant);
-    const hover = this.buttonHoverColor(variant);
-    const button = this.add
-      .text(x, y, label, {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '14px',
-        color: '#ffffff',
-        backgroundColor: base,
-        padding: { left: 11, right: 11, top: 7, bottom: 7 },
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
-    button.on('pointerover', () => {
-      button.setStyle({ backgroundColor: hover });
-      this.tweens.add({ targets: button, y: y - 2, duration: 90 });
+  ): GameObjects.Container {
+    return drawTileButton(this, {
+      x,
+      y,
+      label,
+      variant,
+      onClick: () => onClick(),
     });
-    button.on('pointerout', () => {
-      button.setStyle({ backgroundColor: base });
-      this.tweens.add({ targets: button, y, duration: 90 });
-    });
-    button.on('pointerdown', () => {
-      this.tweens.add({
-        targets: button,
-        scaleX: 0.94,
-        scaleY: 0.94,
-        yoyo: true,
-        duration: 80,
-      });
-      onClick();
-    });
-    return button;
-  }
-
-  private buttonColor(variant: ButtonVariant): string {
-    return {
-      dark: '#25313b',
-      blue: '#2577ff',
-      green: '#16a66a',
-      orange: '#f28d13',
-      red: '#df4758',
-    }[variant];
-  }
-
-  private buttonHoverColor(variant: ButtonVariant): string {
-    return {
-      dark: '#354555',
-      blue: '#339dff',
-      green: '#27bf7d',
-      orange: '#ffad2d',
-      red: '#ff5365',
-    }[variant];
   }
 }
 

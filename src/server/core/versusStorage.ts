@@ -25,6 +25,7 @@ import {
   type VersusPendingItem,
   type VersusRematchResponse,
   type VersusRematchSummary,
+  type VersusResultResponse,
   type VersusRoundSummary,
   type VersusSessionResponse,
   validateVersusPattern,
@@ -42,6 +43,7 @@ import { versusXpForResult } from '../../shared/progression';
 import {
   inviteAcceptanceDecision,
   rematchCreationDecision,
+  resolvedResultAccessDecision,
   responsePatternDecision,
 } from '../../shared/versusState';
 
@@ -417,6 +419,33 @@ export const openVersusSession = async (
   };
 };
 
+export const loadVersusResult = async (
+  matchId: string,
+  userId: string
+): Promise<VersusResultResponse> => {
+  const stored = await loadMatch(matchId);
+  if (!stored) {
+    throw new VersusStorageError('Detailed replay is no longer available.', 404);
+  }
+  const isParticipant =
+    stored.participantA.userId === userId || stored.participantB.userId === userId;
+  if (resolvedResultAccessDecision(isParticipant, stored.status) === 'not-participant') {
+    throw new VersusStorageError('You are not part of this match.', 404);
+  }
+  const match = await settleSaveAndFinalizeMatch(stored, Date.now());
+  const access = resolvedResultAccessDecision(
+    isParticipant,
+    match.status
+  );
+  if (access === 'still-active') {
+    throw new VersusStorageError('This match is still active.', 409);
+  }
+  return {
+    type: 'versus-result',
+    match: await summarizeMatch(match, userId),
+  };
+};
+
 export const guessVersusTile = async (
   matchId: string,
   userId: string,
@@ -498,7 +527,7 @@ export const createRematchRequest = async (
   assertParticipant(source, user.userId);
   const settled = await settleSaveAndFinalizeMatch(source, Date.now());
   if (settled.status === 'active') {
-    throw new VersusStorageError('Finish this match before requesting a rematch.', 409);
+    throw new VersusStorageError('Finish this match before sending another invitation.', 409);
   }
 
   const rematchKey = versusStorageKeys.rematch(sourceMatchId);
@@ -516,18 +545,48 @@ export const createRematchRequest = async (
         : null,
       user.userId
     );
-    if (decision !== 'create') {
+    if (decision === 'idempotent') {
       await transaction.unwatch();
-      if (!loaded || decision === 'opponent-pending') {
-        throw new VersusStorageError(
-          'Your opponent already requested a rematch. Review it under Action Needed.',
-          409
-        );
+      if (!loaded) {
+        continue;
       }
       return {
         type: 'versus-rematch',
         rematch: summarizeRematch(loaded, user.userId),
+        ...(loaded.createdMatchId
+          ? { matchedMatchId: loaded.createdMatchId }
+          : {}),
       };
+    }
+    if (decision === 'join' && loaded) {
+      const match = createMatchRecord(
+        { ...loaded.requester, pattern: loaded.requesterPattern },
+        { ...loaded.responder, pattern },
+        'rematch',
+        now
+      );
+      const joined: RematchRecord = {
+        ...loaded,
+        status: 'matched',
+        createdMatchId: match.matchId,
+      };
+      try {
+        await transaction.multi();
+        await transaction.set(rematchKey, JSON.stringify(joined));
+        await transaction.expire(rematchKey, ARCHIVE_SECONDS);
+        await addMatchToTransaction(transaction, match, now);
+        const result: unknown = await transaction.exec();
+        if (result === null) {
+          continue;
+        }
+        return {
+          type: 'versus-rematch',
+          rematch: summarizeRematch(joined, user.userId),
+          matchedMatchId: match.matchId,
+        };
+      } catch {
+        continue;
+      }
     }
     const next = createRematchRecord(settled, user, pattern, now);
 
@@ -548,7 +607,7 @@ export const createRematchRequest = async (
     }
   }
 
-  throw new VersusStorageError('Could not request the rematch. Try again.', 409);
+  throw new VersusStorageError('Could not send the invitation. Try again.', 409);
 };
 
 export const acceptRematchRequest = async (
@@ -591,7 +650,7 @@ export const submitRematchResponsePattern = async (
     const rematch = parseRematch(await redis.get(key));
     if (!rematch || rematch.requestId !== requestId) {
       await transaction.unwatch();
-      throw new VersusStorageError('Rematch request not found.', 404);
+      throw new VersusStorageError('Invitation not found.', 404);
     }
     if (rematch.responder.userId !== user.userId) {
       await transaction.unwatch();
@@ -611,7 +670,7 @@ export const submitRematchResponsePattern = async (
     }
     if (decision === 'invalid') {
       await transaction.unwatch();
-      throw new VersusStorageError('Accept this rematch before choosing a pattern.', 409);
+      throw new VersusStorageError('Accept this invitation before choosing a pattern.', 409);
     }
     const now = Date.now();
     const match = createMatchRecord(
@@ -641,7 +700,7 @@ export const submitRematchResponsePattern = async (
       continue;
     }
   }
-  throw new VersusStorageError('Could not create the rematch. Try again.', 409);
+  throw new VersusStorageError('Could not start the invited match. Try again.', 409);
 };
 
 export const createVersusInvite = async (
@@ -990,7 +1049,7 @@ const mutateRematch = async (
     const rematch = parseRematch(await redis.get(key));
     if (!rematch || rematch.requestId !== requestId) {
       await transaction.unwatch();
-      throw new VersusStorageError('Rematch request not found.', 404);
+      throw new VersusStorageError('Invitation not found.', 404);
     }
     const isRequester = rematch.requester.userId === userId;
     const isResponder = rematch.responder.userId === userId;
@@ -999,7 +1058,7 @@ const mutateRematch = async (
       (action !== 'cancel' && !isResponder)
     ) {
       await transaction.unwatch();
-      throw new VersusStorageError('You cannot update this rematch request.', 409);
+      throw new VersusStorageError('You cannot update this invitation.', 409);
     }
     const nextStatus =
       action === 'accept'
@@ -1022,7 +1081,7 @@ const mutateRematch = async (
         rematch.status !== 'accepted-awaiting-pattern')
     ) {
       await transaction.unwatch();
-      throw new VersusStorageError('This rematch request is no longer available.', 409);
+      throw new VersusStorageError('This invitation is no longer available.', 409);
     }
     const next: RematchRecord = { ...rematch, status: nextStatus };
     try {
@@ -1039,7 +1098,7 @@ const mutateRematch = async (
       continue;
     }
   }
-  throw new VersusStorageError('Could not update the rematch request.', 409);
+  throw new VersusStorageError('Could not update the invitation.', 409);
 };
 
 const summarizeMatch = async (
@@ -1616,6 +1675,7 @@ const summarizeInvite = (
   inviteCode: invite.inviteCode,
   creatorDisplayName: invite.creator.displayName,
   acceptedByDisplayName: invite.acceptedBy?.displayName ?? null,
+  createdAt: invite.createdAt,
   status: invite.status,
   expiresAt: invite.expiresAt,
   role:

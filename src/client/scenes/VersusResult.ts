@@ -5,28 +5,47 @@ import type {
   VersusReplayGuess,
   VersusScore,
 } from '../../shared/versus';
-import type { PlayerProgressSummary } from '../../shared/progression';
+import {
+  buildXpAnimationSegments,
+  createInitialProgress,
+  summarizeProgress,
+  type PlayerProgressSummary,
+  type ProgressReward,
+  type RivalryOpponentSummary,
+} from '../../shared/progression';
+import { acknowledgeRewards } from '../versusClient';
 import {
   TILE_WARS_COLORS,
+  clearSceneContent,
+  drawPlainRivalryRecord,
   drawRaisedPanel,
-  drawTileHeading,
-  drawTileWarsBackdrop,
+  drawTileButton,
+  ensureTileWarsSceneShell,
+  type TileWarsSceneShell,
 } from './tileWarsTheme';
 
 type ResultSceneData = {
   match: VersusMatchSummary;
   progress?: PlayerProgressSummary;
+  reward?: ProgressReward;
+  completedAt?: number;
+  historyReturn?: {
+    opponent: RivalryOpponentSummary;
+    page: number;
+  };
 };
 type ColorName = 'red' | 'blue' | 'orange';
 type ButtonVariant = 'dark' | 'green' | 'orange';
-
-const TEXT_RESOLUTION =
-  typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
 const COLORS = TILE_WARS_COLORS;
 
 export class VersusResult extends Scene {
   private match: VersusMatchSummary | null = null;
   private progress: PlayerProgressSummary | null = null;
+  private reward: ProgressReward | null = null;
+  private rewardAnimated = false;
+  private sceneShell: TileWarsSceneShell | null = null;
+  private completedAt: number | null = null;
+  private historyReturn: ResultSceneData['historyReturn'] = undefined;
 
   constructor() {
     super('VersusResult');
@@ -35,9 +54,14 @@ export class VersusResult extends Scene {
   init(data: ResultSceneData): void {
     this.match = data.match;
     this.progress = data.progress ?? null;
+    this.reward = data.reward ?? null;
+    this.rewardAnimated = false;
+    this.completedAt = data.completedAt ?? null;
+    this.historyReturn = data.historyReturn;
   }
 
   create(): void {
+    this.sceneShell = null;
     this.cameras.main.setBackgroundColor(0xf6f0e8);
     this.scale.on('resize', this.render, this);
     this.events.once('shutdown', () => {
@@ -47,9 +71,7 @@ export class VersusResult extends Scene {
   }
 
   private render(): void {
-    this.tweens.killAll();
-    this.children.removeAll(true);
-    this.input.resetCursor();
+    clearSceneContent(this, this.sceneShell);
     if (!this.match) {
       this.scene.start('VersusLobby');
       return;
@@ -58,39 +80,44 @@ export class VersusResult extends Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     const mobile = width < 700;
-    drawTileWarsBackdrop(this, width, height);
-    drawTileHeading(this, 'Result', width / 2, 34, mobile);
+    this.sceneShell = ensureTileWarsSceneShell(this, this.sceneShell, {
+      width,
+      height,
+      headingY: 28,
+      mobile,
+      maxHeadingSize: mobile ? 25 : 31,
+    });
+    const banner = this.outcomePresentation();
     this.add
       .text(
         width / 2,
-        78,
-        `You ${this.match.rivalry.wins} - ${this.match.rivalry.losses} ${this.match.opponentDisplayName}${this.match.rivalry.draws ? `  (${this.match.rivalry.draws} draw${this.match.rivalry.draws === 1 ? '' : 's'})` : ''}`,
+        mobile ? 62 : 72,
+        banner.label,
         {
           fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: mobile ? '14px' : '16px',
-          color: '#f28d13',
+          fontSize: mobile ? '20px' : '25px',
+          color: banner.color,
         }
       )
       .setOrigin(0.5);
-
-    if (this.match.outcome === 'draw' || this.match.outcome === 'no-contest') {
+    const detailShift = this.completedAt ? 14 : 0;
+    if (this.completedAt) {
       this.add
-        .text(
-          width / 2,
-          103,
-          this.match.outcome === 'draw' ? 'DRAW' : 'NO CONTEST',
-          {
-            fontFamily: 'Arial Black, Arial, sans-serif',
-            fontSize: '18px',
-            color: '#f28d13',
-          }
-        )
+        .text(width / 2, mobile ? 82 : 92, new Date(this.completedAt).toLocaleDateString(), {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: '11px',
+          color: '#53606b',
+        })
         .setOrigin(0.5);
     }
+    const rivalryY = (mobile ? 91 : 102) + detailShift;
+    drawPlainRivalryRecord(this, width / 2, rivalryY, this.match.rivalry, 14);
 
     const panelWidth = mobile ? Math.min(width - 30, 390) : Math.min(360, width * 0.4);
-    const panelHeight = mobile ? 204 : 326;
-    const firstY = mobile ? 122 : 112;
+    const panelHeight = mobile
+      ? Math.max(142, Math.min(300, (height - 225) / 2))
+      : Math.max(160, Math.min(326, height - 220));
+    const firstY = (mobile ? 111 : height < 600 ? 116 : 120) + detailShift;
     const myX = mobile ? width / 2 : width / 2 - panelWidth / 2 - 15;
     const opponentX = mobile ? width / 2 : width / 2 + panelWidth / 2 + 15;
     this.drawPlayerPanel(
@@ -104,20 +131,9 @@ export class VersusResult extends Scene {
       this.match.outcome === 'win'
     );
 
-    const progressY = mobile ? firstY + panelHeight * 2 + 27 : firstY + panelHeight + 38;
-    this.add
-      .text(width / 2, progressY, `+${this.match.xpEarned} XP`, {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '20px',
-        color: this.match.xpEarned > 0 ? '#16a66a' : '#6b7280',
-      })
-      .setOrigin(0.5);
-    if (this.progress) {
-      this.drawProgressBar(progressY + 24);
-    }
     this.drawPlayerPanel(
       opponentX,
-      mobile ? firstY + panelHeight + 12 : firstY,
+      mobile ? firstY + panelHeight + 8 : firstY,
       panelWidth,
       panelHeight,
       this.match.opponentDisplayName,
@@ -126,12 +142,29 @@ export class VersusResult extends Scene {
       this.match.outcome === 'loss'
     );
 
-    const buttonsY = height - 32;
+    const progressY = mobile
+      ? firstY + panelHeight * 2 + 18
+      : firstY + panelHeight + (height < 600 ? 8 : 32);
+    if (this.progress) {
+      this.drawProgressBar(progressY);
+    } else {
+      this.add
+        .text(width / 2, progressY, `+${this.match.xpEarned} XP earned`, {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: '16px',
+          color: this.match.xpEarned > 0 ? '#16a66a' : '#6b7280',
+        })
+        .setOrigin(0.5);
+    }
+
+    const buttonsY = height - (mobile ? 25 : 32);
     this.createButton(
       width / 2 - 92,
       buttonsY,
-      'Lobby',
-      () => this.scene.start('VersusLobby'),
+      this.historyReturn ? 'History' : 'Lobby',
+      () => this.scene.start('VersusLobby', this.historyReturn
+        ? { historyReturn: this.historyReturn }
+        : {}),
       'orange'
     );
     this.createButton(
@@ -152,27 +185,89 @@ export class VersusResult extends Scene {
     }
     const width = Math.min(this.scale.width - 48, 360);
     const x = (this.scale.width - width) / 2;
-    const ratio = Math.min(
-      1,
-      this.progress.levelXp / this.progress.xpForNextLevel
-    );
-    const graphics = this.add.graphics();
-    graphics.fillStyle(0xd8d0c5, 1);
-    graphics.fillRoundedRect(x, y, width, 12, 6);
-    graphics.fillStyle(COLORS.green, 1);
-    graphics.fillRoundedRect(x, y, width * ratio, 12, 6);
-    this.add
+    const reward = this.reward;
+    const initial = reward && !this.rewardAnimated
+      ? summarizeProgress({
+          ...createInitialProgress(),
+          totalXp: reward.previousTotalXp,
+        })
+      : this.progress;
+    const levelLabel = this.add
+      .text(this.scale.width / 2, y, `Level ${initial.level}`, {
+        fontFamily: 'Arial Black, Arial, sans-serif',
+        fontSize: '13px',
+        color: '#25313b',
+      })
+      .setOrigin(0.5);
+    const xpLabel = this.add
       .text(
         this.scale.width / 2,
-        y + 6,
-        `Level ${this.progress.level}  ${this.progress.levelXp}/${this.progress.xpForNextLevel}`,
+        y + 17,
+        `${initial.levelXp}/${initial.xpForNextLevel} XP · +${reward?.amount ?? this.match?.xpEarned ?? 0} XP earned`,
         {
           fontFamily: 'Arial Black, Arial, sans-serif',
           fontSize: '10px',
-          color: '#18212b',
+          color: '#33404c',
         }
       )
       .setOrigin(0.5);
+    const graphics = this.add.graphics();
+    graphics.fillStyle(0xd8d0c5, 1);
+    graphics.fillRoundedRect(x, y + 29, width, 11, 6);
+    graphics.lineStyle(1, COLORS.line, 0.28);
+    graphics.strokeRoundedRect(x, y + 29, width, 11, 6);
+    const fill = this.add
+      .rectangle(x, y + 34.5, width, 9, COLORS.green)
+      .setOrigin(0, 0.5)
+      .setScale(initial.levelXp / initial.xpForNextLevel, 1);
+
+    if (!reward || this.rewardAnimated) {
+      return;
+    }
+    const segments = buildXpAnimationSegments(
+      reward.previousTotalXp,
+      reward.newTotalXp
+    );
+    const animateSegment = (index: number): void => {
+      const segment = segments[index];
+      if (!segment) {
+        levelLabel.setText(`Level ${this.progress?.level ?? 1}`);
+        if (this.progress) {
+          xpLabel.setText(
+            `${this.progress.levelXp}/${this.progress.xpForNextLevel} XP · +${reward.amount} XP earned`
+          );
+        }
+        this.rewardAnimated = true;
+        void acknowledgeRewards([reward.rewardId]).catch(() => undefined);
+        return;
+      }
+      levelLabel.setText(`Level ${segment.level}`);
+      fill.setScale(segment.fromXp / segment.xpForNextLevel, 1);
+      this.tweens.add({
+        targets: fill,
+        scaleX: segment.toXp / segment.xpForNextLevel,
+        duration: 650,
+        ease: 'Sine.easeOut',
+        onUpdate: () => {
+          xpLabel.setText(
+            `${Math.round(segment.xpForNextLevel * fill.scaleX)}/${segment.xpForNextLevel} XP · +${reward.amount} XP earned`
+          );
+        },
+        onComplete: () => {
+          if (segment.completesLevel) {
+            this.tweens.add({
+              targets: levelLabel,
+              scaleX: 1.12,
+              scaleY: 1.12,
+              yoyo: true,
+              duration: 150,
+            });
+          }
+          animateSegment(index + 1);
+        },
+      });
+    };
+    animateSegment(0);
   }
 
   private drawPlayerPanel(
@@ -218,7 +313,7 @@ export class VersusResult extends Scene {
     }
 
     this.add
-      .text(centerX, y + 24, name, {
+      .text(centerX, y + 18, name, {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: width < 320 ? '16px' : '18px',
         color: '#18212b',
@@ -229,7 +324,7 @@ export class VersusResult extends Scene {
     this.add
       .text(
         centerX,
-        y + 50,
+        y + 40,
         score
           ? `${score.guesses} guesses - ${formatDuration(score.durationMs)}`
           : 'Did not finish',
@@ -241,8 +336,8 @@ export class VersusResult extends Scene {
       )
       .setOrigin(0.5);
 
-    const gridSize = Math.min(width - 48, height - 92, 225);
-    this.drawReplayGrid(centerX - gridSize / 2, y + 72, gridSize, replay);
+    const gridSize = Math.min(width - 40, height - 60, 225);
+    this.drawReplayGrid(centerX - gridSize / 2, y + 53, gridSize, replay);
   }
 
   private drawReplayGrid(
@@ -338,49 +433,28 @@ export class VersusResult extends Scene {
     label: string,
     onClick: () => void,
     variant: ButtonVariant = 'dark'
-  ): GameObjects.Text {
-    const base =
-      variant === 'green'
-        ? '#16a66a'
-        : variant === 'orange'
-          ? '#f28d13'
-          : '#25313b';
-    const hover =
-      variant === 'green'
-        ? '#27bf7d'
-        : variant === 'orange'
-          ? '#ffad2d'
-          : '#354555';
-    const button = this.add
-      .text(x, y, label, {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '14px',
-        color: '#ffffff',
-        backgroundColor: base,
-        padding: { left: 12, right: 12, top: 7, bottom: 7 },
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
-    button.on('pointerover', () => {
-      button.setStyle({ backgroundColor: hover });
-      this.tweens.add({ targets: button, y: y - 2, duration: 90 });
+  ): GameObjects.Container {
+    return drawTileButton(this, {
+      x,
+      y,
+      label,
+      onClick: () => onClick(),
+      variant,
+      width: 130,
     });
-    button.on('pointerout', () => {
-      button.setStyle({ backgroundColor: base });
-      this.tweens.add({ targets: button, y, duration: 90 });
-    });
-    button.on('pointerdown', () => {
-      this.tweens.add({
-        targets: button,
-        scaleX: 0.94,
-        scaleY: 0.94,
-        yoyo: true,
-        duration: 80,
-      });
-      onClick();
-    });
-    return button;
+  }
+
+  private outcomePresentation(): { label: string; color: string } {
+    if (this.match?.outcome === 'win') {
+      return { label: 'You Won!', color: '#35d07f' };
+    }
+    if (this.match?.outcome === 'loss') {
+      return { label: 'You Lost', color: '#ff5365' };
+    }
+    if (this.match?.outcome === 'draw') {
+      return { label: 'Draw!', color: '#ffb12d' };
+    }
+    return { label: 'Match Complete', color: '#25313b' };
   }
 }
 

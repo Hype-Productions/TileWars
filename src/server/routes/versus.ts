@@ -19,6 +19,7 @@ import {
   createVersusRound,
   guessVersusTile,
   loadVersusLobby,
+  loadVersusResult,
   loadVersusInvite,
   loadVersusInviteByCode,
   markVersusTile,
@@ -184,6 +185,16 @@ versusApi.get('/matches/:matchId/session', async (c) => {
   try {
     return c.json(
       await openVersusSession(c.req.param('matchId'), currentUser().userId)
+    );
+  } catch (error) {
+    return versusError(c, error);
+  }
+});
+
+versusApi.get('/matches/:matchId/result', async (c) => {
+  try {
+    return c.json(
+      await loadVersusResult(c.req.param('matchId'), currentUser().userId)
     );
   } catch (error) {
     return versusError(c, error);

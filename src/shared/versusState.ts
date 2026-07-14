@@ -9,17 +9,21 @@ export type PendingRequestState =
 export const rematchCreationDecision = (
   current: { status: PendingRequestState; requesterUserId: string } | null,
   actorUserId: string
-): 'create' | 'idempotent' | 'opponent-pending' => {
+): 'create' | 'idempotent' | 'join' => {
   if (
     !current ||
     (current.status !== 'pending' &&
-      current.status !== 'accepted-awaiting-pattern')
+      current.status !== 'accepted-awaiting-pattern' &&
+      current.status !== 'matched')
   ) {
     return 'create';
   }
+  if (current.status === 'matched') {
+    return 'idempotent';
+  }
   return current.requesterUserId === actorUserId
     ? 'idempotent'
-    : 'opponent-pending';
+    : 'join';
 };
 
 export const responsePatternDecision = (
@@ -47,4 +51,14 @@ export const inviteAcceptanceDecision = (
     return 'idempotent';
   }
   return 'unavailable';
+};
+
+export const resolvedResultAccessDecision = (
+  isParticipant: boolean,
+  status: 'active' | 'complete' | 'expired'
+): 'allow' | 'not-participant' | 'still-active' => {
+  if (!isParticipant) {
+    return 'not-participant';
+  }
+  return status === 'active' ? 'still-active' : 'allow';
 };

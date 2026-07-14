@@ -35,6 +35,7 @@ export type {
   VersusPatternRequest,
   VersusRematchResponse,
   VersusRematchSummary,
+  VersusResultResponse,
   VersusRules,
   VersusSessionResponse,
 } from './versus';

@@ -34,6 +34,14 @@ export type ProgressReward = {
   createdAt: number;
 };
 
+export type XpAnimationSegment = {
+  level: number;
+  fromXp: number;
+  toXp: number;
+  xpForNextLevel: number;
+  completesLevel: boolean;
+};
+
 export type RivalrySummary = {
   wins: number;
   losses: number;
@@ -41,6 +49,8 @@ export type RivalrySummary = {
 };
 
 export type RivalryOutcome = 'win' | 'loss' | 'draw';
+export type RivalryOutcomeSlot = RivalryOutcome | null;
+export type RivalryOutcomeColor = 'green' | 'red' | 'orange' | 'cream';
 
 export type RivalryMatchScore = {
   guesses: number;
@@ -158,6 +168,54 @@ export const versusXpForResult = (
     return completed ? VERSUS_LOSS_XP : 0;
   }
   return 0;
+};
+
+export const buildXpAnimationSegments = (
+  previousTotalXp: number,
+  newTotalXp: number
+): XpAnimationSegment[] => {
+  let currentTotalXp = Math.max(0, Math.floor(previousTotalXp));
+  const targetTotalXp = Math.max(currentTotalXp, Math.floor(newTotalXp));
+  const segments: XpAnimationSegment[] = [];
+
+  while (currentTotalXp < targetTotalXp) {
+    const summary = summarizeProgress({
+      ...createInitialProgress(),
+      totalXp: currentTotalXp,
+    });
+    const available = summary.xpForNextLevel - summary.levelXp;
+    const amount = Math.min(available, targetTotalXp - currentTotalXp);
+    const toXp = summary.levelXp + amount;
+    segments.push({
+      level: summary.level,
+      fromXp: summary.levelXp,
+      toXp,
+      xpForNextLevel: summary.xpForNextLevel,
+      completesLevel: toXp === summary.xpForNextLevel,
+    });
+    currentTotalXp += amount;
+  }
+
+  return segments;
+};
+
+export const rivalryOutcomeSlots = (
+  outcomes: RivalryOutcome[]
+): RivalryOutcomeSlot[] => {
+  const recent = outcomes.slice(-5);
+  return [...recent, ...Array<RivalryOutcomeSlot>(5 - recent.length).fill(null)];
+};
+
+export const rivalryOutcomeColor = (
+  outcome: RivalryOutcomeSlot
+): RivalryOutcomeColor => {
+  return outcome === 'win'
+    ? 'green'
+    : outcome === 'loss'
+      ? 'red'
+      : outcome === 'draw'
+        ? 'orange'
+        : 'cream';
 };
 
 const daysBetween = (first: string, second: string): number => {

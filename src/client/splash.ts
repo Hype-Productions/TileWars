@@ -3,6 +3,12 @@ import type {
   DailyLeaderboardResponse,
   LeaderboardEntry,
 } from '../shared/game';
+import {
+  createDailyPuzzleId,
+  leaderboardRankColor,
+  selectLeaderboardDisplayRows,
+} from '../shared/game';
+import { todayUtcDate } from '../shared/pattern';
 import type { PlayerProgressSummary } from '../shared/progression';
 
 const dailyButton = document.getElementById('daily-button');
@@ -12,8 +18,9 @@ const leaderboardClose = document.getElementById('leaderboard-close');
 const leaderboardList = document.getElementById('leaderboard-list');
 const interactiveBoard = document.getElementById('interactive-board');
 const subredditUrl = 'https://www.reddit.com/r/TileFinder/';
-const dailyKicker = dailyButton?.querySelector('.button-kicker');
 const versusKicker = versusButton?.querySelector('.button-kicker');
+const dailyNumber = document.getElementById('daily-number');
+const dailyStreak = document.getElementById('daily-streak');
 
 const tileColors = [
   'tile-cream',
@@ -128,6 +135,7 @@ if (interactiveBoard instanceof HTMLElement) {
 }
 
 void loadSplashProgress();
+renderDailyNumber();
 
 document.querySelectorAll('.letter-tile').forEach((tile) => {
   tile.addEventListener('pointerdown', () => {
@@ -435,11 +443,12 @@ async function loadSplashProgress(): Promise<void> {
       return;
     }
 
-    if (dailyKicker instanceof HTMLElement) {
-      dailyKicker.textContent =
-        progress.dailyStreak > 0
-          ? `${progress.dailyStreak} day streak`
-          : 'Start your streak';
+    if (dailyStreak instanceof HTMLElement) {
+      dailyStreak.textContent = `🔥 ${progress.dailyStreak}`;
+      dailyStreak.setAttribute(
+        'aria-label',
+        `${progress.dailyStreak} day Daily streak`
+      );
     }
     if (versusKicker instanceof HTMLElement) {
       const record = progress.versus;
@@ -448,6 +457,15 @@ async function loadSplashProgress(): Promise<void> {
   } catch {
     // Keep the static button labels when Reddit data is unavailable.
   }
+}
+
+function renderDailyNumber(): void {
+  if (!(dailyNumber instanceof HTMLElement)) {
+    return;
+  }
+  const puzzleNumber = createDailyPuzzleId(todayUtcDate()).puzzleNumber;
+  dailyNumber.textContent = `#${puzzleNumber}`;
+  dailyNumber.setAttribute('aria-label', `Daily challenge ${puzzleNumber}`);
 }
 
 async function loadDailyLeaderboard(): Promise<void> {
@@ -464,7 +482,7 @@ async function loadDailyLeaderboard(): Promise<void> {
     }
     renderLeaderboard(data.leaderboard, data.playerRank);
   } catch {
-    renderLeaderboardMessage('Rankings are unavailable right now.');
+    renderLeaderboardMessage('Daily leaderboard is unavailable right now.');
   }
 }
 
@@ -476,27 +494,31 @@ function renderLeaderboard(
     return;
   }
 
-  const entries = leaderboard.slice(0, 3);
-  if (playerRank && !entries.some((entry) => entry.rank === playerRank.rank)) {
-    entries.push(playerRank);
-  }
+  const rows = selectLeaderboardDisplayRows(leaderboard, playerRank);
 
   leaderboardList.replaceChildren();
-  if (entries.length === 0) {
+  if (rows.length === 0) {
     renderLeaderboardMessage('No one has finished today yet.');
     return;
   }
 
-  for (const entry of entries) {
+  for (const row of rows) {
     const item = document.createElement('li');
+    if (row.kind === 'ellipsis') {
+      item.className = 'is-ellipsis';
+      item.textContent = '…';
+      leaderboardList.append(item);
+      continue;
+    }
+    const entry = row.entry;
     const rank = document.createElement('span');
     const player = document.createElement('span');
     const score = document.createElement('span');
 
-    if (playerRank?.rank === entry.rank) {
+    if (row.isPlayer) {
       item.classList.add('is-player');
     }
-    rank.className = 'rank';
+    rank.className = `rank rank-color-${leaderboardRankColor(entry.rank)}`;
     rank.textContent = entry.rank.toString();
     player.className = 'player';
     player.textContent = entry.displayName;

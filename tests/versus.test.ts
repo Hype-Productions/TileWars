@@ -19,6 +19,7 @@ import {
 import {
   inviteAcceptanceDecision,
   rematchCreationDecision,
+  resolvedResultAccessDecision,
   responsePatternDecision,
 } from '../src/shared/versusState';
 
@@ -105,10 +106,16 @@ describe('versus rules', () => {
     ]);
   });
 
-  it('keeps crossed rematch requests as one explicit request', () => {
+  it('joins a crossed rematch invitation and keeps retries idempotent', () => {
     const pending = { status: 'pending' as const, requesterUserId: 'user-a' };
     expect(rematchCreationDecision(pending, 'user-a')).toBe('idempotent');
-    expect(rematchCreationDecision(pending, 'user-b')).toBe('opponent-pending');
+    expect(rematchCreationDecision(pending, 'user-b')).toBe('join');
+    expect(
+      rematchCreationDecision(
+        { status: 'matched', requesterUserId: 'user-a' },
+        'user-b'
+      )
+    ).toBe('idempotent');
     expect(rematchCreationDecision(null, 'user-b')).toBe('create');
   });
 
@@ -148,7 +155,7 @@ describe('versus rules', () => {
     );
   });
 
-  it('shows a rematch request once instead of duplicating its result card', () => {
+  it('keeps an invitation and its permanent result in their requested groups', () => {
     const resultMatch = {
       matchId: 'match-1',
       source: 'public' as const,
@@ -182,7 +189,62 @@ describe('versus rules', () => {
       matches: [resultMatch],
       pendingItems: [pendingItem],
     });
-    expect(sections.actionItems).toEqual([pendingItem]);
-    expect(sections.resultMatches).toEqual([]);
+    expect(sections.invitations).toEqual([pendingItem]);
+    expect(sections.resultMatches).toEqual([resultMatch]);
+  });
+
+  it('orders active matches as continue, play, then waiting', () => {
+    const match = (id: string, attempt: 'playing' | 'not-started' | 'solved', createdAt: number) => ({
+      matchId: id,
+      source: 'public' as const,
+      opponentDisplayName: id,
+      status: 'active' as const,
+      outcome: 'pending' as const,
+      createdAt,
+      expiresAt: createdAt + 100,
+      myAttemptStatus: attempt,
+      opponentAttemptStatus: 'not-started' as const,
+      myScore: null,
+      opponentScore: null,
+      myReplay: [],
+      opponentReplay: [],
+      rivalry: { wins: 0, losses: 0, draws: 0 },
+      xpEarned: 0,
+    });
+    const sections = organizeVersusLobby({
+      matches: [match('waiting', 'solved', 4), match('play', 'not-started', 3), match('continue', 'playing', 2)],
+      pendingItems: [],
+    });
+    expect(sections.activeMatches.map((entry) => entry.matchId)).toEqual([
+      'continue',
+      'play',
+      'waiting',
+    ]);
+  });
+
+  it('orders actionable invitations before sent invitations', () => {
+    const incoming = {
+      kind: 'rematch' as const,
+      rematch: {
+        requestId: 'incoming', sourceMatchId: 'one', opponentDisplayName: 'A',
+        status: 'pending' as const, role: 'responder' as const, createdAt: 1, expiresAt: 10,
+      },
+    };
+    const outgoing = {
+      kind: 'rematch' as const,
+      rematch: {
+        requestId: 'outgoing', sourceMatchId: 'two', opponentDisplayName: 'B',
+        status: 'pending' as const, role: 'requester' as const, createdAt: 2, expiresAt: 10,
+      },
+    };
+    const sections = organizeVersusLobby({ matches: [], pendingItems: [outgoing, incoming] });
+    expect(sections.invitations).toEqual([incoming, outgoing]);
+  });
+
+  it('allows only participants to open resolved analytical results', () => {
+    expect(resolvedResultAccessDecision(true, 'complete')).toBe('allow');
+    expect(resolvedResultAccessDecision(true, 'expired')).toBe('allow');
+    expect(resolvedResultAccessDecision(true, 'active')).toBe('still-active');
+    expect(resolvedResultAccessDecision(false, 'complete')).toBe('not-participant');
   });
 });

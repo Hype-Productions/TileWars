@@ -22,7 +22,11 @@ import {
   validateVersusPattern,
   versusRules,
 } from '../../shared/versus';
-import { createInitialProgress, summarizeProgress } from '../../shared/progression';
+import {
+  buildXpAnimationSegments,
+  createInitialProgress,
+  summarizeProgress,
+} from '../../shared/progression';
 import type {
   RivalryHistoryEntry,
   RivalryOpponentSummary,
@@ -39,6 +43,7 @@ import {
   getVersusLobby,
   getVersusOpponents,
   getVersusRivalryHistory,
+  getVersusResult,
   postVersusLobby,
   releaseVersusInvite,
   submitRematchPattern,
@@ -48,9 +53,15 @@ import {
 } from '../versusClient';
 import {
   TILE_WARS_COLORS,
+  clearSceneContent,
+  drawTileWarsLoadingMessage,
+  drawOutcomeStrip,
+  drawPlainRivalryRecord,
   drawRaisedPanel,
-  drawTileHeading,
-  drawTileWarsBackdrop,
+  drawStaticXpBar,
+  drawTileButton,
+  ensureTileWarsSceneShell,
+  type TileWarsSceneShell,
 } from './tileWarsTheme';
 
 type PickerMode =
@@ -64,6 +75,10 @@ type PickerMode =
 type LobbySceneData = {
   rematchMatchId?: string;
   inviteId?: string;
+  historyReturn?: {
+    opponent: RivalryOpponentSummary;
+    page: number;
+  };
 };
 
 const COLORS = {
@@ -86,10 +101,11 @@ export class VersusLobby extends Scene {
   private pendingInviteId: string | null = null;
   private incomingInvite: VersusInviteSummary | null = null;
   private selectedKeys = new Set<string>();
-  private status = 'Loading Versus...';
+  private status = 'Loading TILEWARS...';
   private loading = false;
   private pollEvent: Time.TimerEvent | null = null;
   private rewardVisible = false;
+  private rewardAnimationComplete = false;
   private codeEntryVisible = false;
   private inviteCode = '';
   private codeInput: HTMLInputElement | null = null;
@@ -99,6 +115,8 @@ export class VersusLobby extends Scene {
   private selectedOpponent: RivalryOpponentSummary | null = null;
   private opponentHistory: RivalryHistoryEntry[] = [];
   private historyPage = 0;
+  private pendingHistoryReturn: LobbySceneData['historyReturn'] = undefined;
+  private sceneShell: TileWarsSceneShell | null = null;
   private contentHeight = 768;
   private dragPointerY: number | null = null;
   private knownMatchIds = new Set<string>();
@@ -119,6 +137,7 @@ export class VersusLobby extends Scene {
     this.incomingInvite = null;
     this.selectedKeys.clear();
     this.rewardVisible = false;
+    this.rewardAnimationComplete = false;
     this.codeEntryVisible = false;
     this.inviteCode = '';
     this.opponentSearchVisible = false;
@@ -127,9 +146,11 @@ export class VersusLobby extends Scene {
     this.selectedOpponent = null;
     this.opponentHistory = [];
     this.historyPage = 0;
+    this.pendingHistoryReturn = data.historyReturn;
   }
 
   create(): void {
+    this.sceneShell = null;
     this.cameras.main.setBackgroundColor(COLORS.background);
     this.scale.on('resize', this.render, this);
     this.events.once('shutdown', this.handleShutdown, this);
@@ -137,8 +158,7 @@ export class VersusLobby extends Scene {
     this.input.on('pointerdown', this.handlePointerDown, this);
     this.input.on('pointermove', this.handlePointerMove, this);
     this.input.on('pointerup', this.handlePointerUp, this);
-    this.input.keyboard?.on('keydown', this.handleCodeKey, this);
-    const codeInput = document.getElementById('versus-code-input');
+    const codeInput = document.getElementById('versus-overlay-input');
     this.codeInput = codeInput instanceof HTMLInputElement ? codeInput : null;
     this.codeInput?.addEventListener('input', this.handleCodeInput);
     this.codeInput?.addEventListener('keydown', this.handleCodeInputKey);
@@ -153,6 +173,12 @@ export class VersusLobby extends Scene {
 
   private async initializeLobby(): Promise<void> {
     await this.refreshLobby(false);
+    if (this.pendingHistoryReturn) {
+      const target = this.pendingHistoryReturn;
+      this.pendingHistoryReturn = undefined;
+      await this.openOpponentHistory(target.opponent, target.page);
+      return;
+    }
     const inviteId = this.pendingInviteId;
     this.pendingInviteId = null;
     if (inviteId) {
@@ -166,7 +192,6 @@ export class VersusLobby extends Scene {
     this.input.off('pointerdown', this.handlePointerDown, this);
     this.input.off('pointermove', this.handlePointerMove, this);
     this.input.off('pointerup', this.handlePointerUp, this);
-    this.input.keyboard?.off('keydown', this.handleCodeKey, this);
     this.codeInput?.removeEventListener('input', this.handleCodeInput);
     this.codeInput?.removeEventListener('keydown', this.handleCodeInputKey);
     this.hideCodeInput();
@@ -210,37 +235,31 @@ export class VersusLobby extends Scene {
 
   private render(): void {
     this.hideCodeInput();
-    this.tweens.killAll();
-    this.children.removeAll(true);
-    this.input.resetCursor();
+    clearSceneContent(this, this.sceneShell);
     const width = this.scale.width;
     const mobile = width < 700;
-    drawTileWarsBackdrop(
-      this,
+    this.sceneShell = ensureTileWarsSceneShell(this, this.sceneShell, {
       width,
-      Math.max(this.scale.height, this.contentHeight)
-    );
-    drawTileHeading(this, 'Versus', width / 2, 34, mobile);
-    this.createButton(
-      52,
-      34,
-      'Back',
-      (pointer) => this.goBack(pointer),
-      'orange'
-    );
+      height: Math.max(this.scale.height, this.contentHeight),
+      headingY: this.lobby ? 34 : 46,
+      mobile,
+    });
 
     if (!this.lobby) {
-      this.drawCenteredMessage(this.status);
+      drawTileWarsLoadingMessage(this, this.status);
       return;
     }
     if (this.pickerMode) {
       this.drawPatternPicker();
+    } else if (this.selectedOpponent) {
+      this.drawOpponentHistoryScreen();
     } else {
       this.drawLobbyOverview();
     }
     if (this.selectedOpponent) {
-      this.drawOpponentHistoryModal();
-    } else if (this.opponentSearchVisible) {
+      return;
+    }
+    if (this.opponentSearchVisible) {
       this.drawOpponentSearchModal();
     } else if (this.incomingInvite) {
       this.drawInvitePrompt(this.incomingInvite);
@@ -294,48 +313,43 @@ export class VersusLobby extends Scene {
     }
     const width = this.scale.width;
     const progress = this.lobby.progress;
-    drawRaisedPanel(this, 14, 68, width - 28, 56, COLORS.green);
-    this.add.text(28, 86, `Level ${progress.level}`, this.headerStyle()).setOrigin(0, 0.5);
-    this.add
-      .text(width - 28, 86, `${progress.dailyStreak} day streak`, this.headerStyle('#16a66a'))
-      .setOrigin(1, 0.5);
+    drawRaisedPanel(this, 14, 68, width - 28, 82, COLORS.green);
+    this.add.text(28, 84, `Level ${progress.level}`, this.headerStyle()).setOrigin(0, 0.5);
     this.add
       .text(
-        width / 2,
-        108,
-        `${progress.versus.wins}W  ${progress.versus.losses}L  ${progress.versus.draws}D`,
-        { fontFamily: 'Arial, sans-serif', fontSize: '14px', color: '#33404c' }
+        width - 28,
+        84,
+        `${progress.levelXp}/${progress.xpForNextLevel} XP`,
+        this.headerStyle('#33404c')
       )
-      .setOrigin(0.5);
+      .setOrigin(1, 0.5);
+    drawStaticXpBar(this, 28, 101, width - 56, progress.levelXp, progress.xpForNextLevel, 10);
+    drawPlainRivalryRecord(this, width / 2, 132, progress.versus, 15);
 
     const searching = this.lobby.round?.status === 'matching';
-    const actionSpread = Math.min(150, Math.max(108, width * 0.29));
-    this.createButton(width / 2 - actionSpread, 154, searching ? 'Cancel Search' : 'Find Match', () => {
-      if (searching) {
-        void this.closeRound();
-      } else {
-        this.openPicker('public');
-      }
-    }, searching ? 'decline' : 'blue');
-    this.createButton(width / 2, 154, 'Invite', () => this.openPicker('invite-create'), 'accept');
-    this.createButton(width / 2 + actionSpread, 154, 'Enter Code', () => {
+    const actionGap = 6;
+    const actionWidth = (width - 28 - actionGap * 3) / 4;
+    const actionStart = 14 + actionWidth / 2;
+    const actionX = (index: number): number =>
+      actionStart + index * (actionWidth + actionGap);
+    this.createButton(actionX(0), 178, 'Back', (pointer) => this.goBack(pointer), 'orange', actionWidth);
+    this.createButton(actionX(1), 178, searching ? 'Searching' : width < 430 ? 'Find' : 'Find Match', () => {
+      this.openPicker('public');
+    }, 'blue', actionWidth, searching);
+    this.createButton(actionX(2), 178, 'Invite', () => this.openPicker('invite-create'), 'accept', actionWidth);
+    this.createButton(actionX(3), 178, width < 430 ? 'Code' : 'Enter Code', () => {
       this.codeEntryVisible = true;
       this.inviteCode = '';
       this.render();
-    }, 'orange');
+    }, 'decline', actionWidth);
 
     const sections = organizeVersusLobby(this.lobby);
-    let y = 198;
-    y = this.drawPendingSection('Action Needed', COLORS.action, sections.actionItems, y);
-    y = this.drawMatchSection('Your Matches', COLORS.playable, sections.playableMatches, y);
-    y = this.drawMixedWaitingSection(
-      sections.waitingItems,
-      sections.waitingMatches,
-      y
-    );
+    let y = 220;
     if (searching) {
       y = this.drawLookingSection(y);
     }
+    y = this.drawMatchSection('Active Matches', COLORS.playable, sections.activeMatches, y);
+    y = this.drawPendingSection('Invitations', COLORS.action, sections.invitations, y);
     y = this.drawOpponentResultsSection(this.lobby.recentOpponents, y);
     this.add
       .text(width / 2, y + 10, this.status, {
@@ -346,7 +360,7 @@ export class VersusLobby extends Scene {
         wordWrap: { width: width - 30 },
       })
       .setOrigin(0.5, 0);
-    this.contentHeight = Math.max(this.scale.height, y + 70);
+    this.contentHeight = Math.max(this.scale.height, y + 118);
     this.cameras.main.setBounds(0, 0, width, this.contentHeight);
     this.setScroll(this.cameras.main.scrollY);
   }
@@ -362,8 +376,7 @@ export class VersusLobby extends Scene {
     }
     y = this.drawSectionHeader(title, color, y);
     for (const item of items) {
-      this.drawPendingCard(item, color, y);
-      y += 106;
+      y += this.drawPendingCard(item, color, y) + 14;
     }
     return y + 8;
   }
@@ -385,36 +398,33 @@ export class VersusLobby extends Scene {
     return y + 8;
   }
 
-  private drawMixedWaitingSection(
-    items: VersusPendingItem[],
-    matches: VersusMatchSummary[],
-    y: number
-  ): number {
-    if (items.length === 0 && matches.length === 0) {
-      return y;
-    }
-    y = this.drawSectionHeader('Waiting', COLORS.waiting, y);
-    for (const item of items) {
-      this.drawPendingCard(item, COLORS.waiting, y);
-      y += 106;
-    }
-    for (const match of matches) {
-      this.drawMatchCard(match, COLORS.waiting, y);
-      y += 106;
-    }
-    return y + 8;
-  }
-
   private drawLookingSection(y: number): number {
-    y = this.drawSectionHeader('Looking', COLORS.looking, y);
-    this.drawCardPanel(COLORS.looking, y, 82);
+    const mobile = this.scale.width < 500;
+    const height = mobile ? 116 : 88;
+    this.drawCardPanel(COLORS.looking, y, height);
     this.add
-      .text(30, y + 24, 'Looking for an opponent', this.cardTitleStyle())
+      .text(30, y + 22, 'Searching for an opponent', this.cardTitleStyle())
       .setOrigin(0, 0.5);
     this.add
-      .text(30, y + 54, 'Your pattern is saved. You can safely leave.', this.cardBodyStyle())
+      .text(
+        30,
+        y + (mobile ? 59 : 54),
+        'Your 6-tile pattern is waiting for a challenger. When a match is ready, return and play on your own time.',
+        {
+          ...this.cardBodyStyle(),
+          wordWrap: { width: this.scale.width - (mobile ? 138 : 170) },
+        }
+      )
       .setOrigin(0, 0.5);
-    return y + 98;
+    this.createButton(
+      this.scale.width - 66,
+      y + height / 2,
+      'Cancel',
+      () => void this.closeRound(),
+      'decline',
+      92
+    );
+    return y + height + 16;
   }
 
   private drawOpponentResultsSection(
@@ -425,7 +435,7 @@ export class VersusLobby extends Scene {
       return y;
     }
     y = this.drawSectionHeader('Results', COLORS.results, y);
-    this.drawSearchIcon(this.scale.width - 34, y - 20);
+    this.drawSearchIcon(this.scale.width - 76, y - 20);
     for (const opponent of opponents.slice(0, 3)) {
       this.drawOpponentCard(opponent, y);
       y += 98;
@@ -434,15 +444,16 @@ export class VersusLobby extends Scene {
   }
 
   private drawSearchIcon(x: number, y: number): void {
-    const graphics = this.add.graphics();
-    graphics.lineStyle(3, COLORS.results, 1);
-    graphics.strokeCircle(x - 4, y - 3, 8);
-    graphics.lineBetween(x + 2, y + 3, x + 10, y + 11);
-    this.add
-      .zone(x - 20, y - 20, 40, 40)
-      .setOrigin(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerup', () => void this.openOpponentSearch());
+    drawTileButton(this, {
+      x,
+      y,
+      label: 'Search History',
+      variant: 'blue',
+      width: 132,
+      height: 30,
+      fontSize: 11,
+      onClick: () => void this.openOpponentSearch(),
+    });
   }
 
   private drawOpponentCard(opponent: RivalryOpponentSummary, y: number): void {
@@ -451,14 +462,7 @@ export class VersusLobby extends Scene {
     this.add
       .text(30, y + 21, opponent.opponentDisplayName, this.cardTitleStyle())
       .setOrigin(0, 0.5);
-    this.add
-      .text(
-        width - 28,
-        y + 21,
-        `${opponent.wins}-${opponent.losses}${opponent.draws ? ` · ${opponent.draws}D` : ''}`,
-        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#f28d13' }
-      )
-      .setOrigin(1, 0.5);
+    drawPlainRivalryRecord(this, width - 76, y + 21, opponent, 13);
     this.add.text(30, y + 56, 'History', this.cardBodyStyle()).setOrigin(0, 0.5);
     this.drawOutcomeDots(94, y + 56, opponent.recentOutcomes);
     this.add
@@ -469,20 +473,7 @@ export class VersusLobby extends Scene {
   }
 
   private drawOutcomeDots(x: number, y: number, outcomes: RivalryOutcome[]): void {
-    outcomes.slice(-5).forEach((outcome, index) => {
-      const graphics = this.add.graphics();
-      graphics.fillStyle(
-        outcome === 'win'
-          ? COLORS.green
-          : outcome === 'loss'
-            ? COLORS.red
-            : COLORS.orange,
-        1
-      );
-      graphics.fillRoundedRect(x + index * 20 - 7, y - 7, 14, 14, 4);
-      graphics.lineStyle(1, COLORS.line, 0.55);
-      graphics.strokeRoundedRect(x + index * 20 - 7, y - 7, 14, 14, 4);
-    });
+    drawOutcomeStrip(this, x - 8, y - 8, outcomes, 16, 4);
   }
 
   private drawSectionHeader(title: string, color: number, y: number): number {
@@ -505,14 +496,7 @@ export class VersusLobby extends Scene {
     this.add
       .text(30, y + 20, `vs ${match.opponentDisplayName}`, this.cardTitleStyle())
       .setOrigin(0, 0.5);
-    this.add
-      .text(
-        width - 28,
-        y + 20,
-        `${match.rivalry.wins}-${match.rivalry.losses}${match.rivalry.draws ? ` · ${match.rivalry.draws}D` : ''}`,
-        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '13px', color: '#f28d13' }
-      )
-      .setOrigin(1, 0.5);
+    drawPlainRivalryRecord(this, width - 76, y + 20, match.rivalry, 12);
     this.add
       .text(30, y + 49, `${this.sourceLabel(match.source)} · ${this.matchStatus(match)}`, {
         ...this.cardBodyStyle(),
@@ -520,82 +504,94 @@ export class VersusLobby extends Scene {
       })
       .setOrigin(0, 0.5);
     const label =
-      match.status !== 'active'
-        ? 'Results'
-        : match.myAttemptStatus === 'playing'
-          ? 'Continue'
-          : match.myAttemptStatus === 'not-started'
-            ? 'Play'
-            : null;
+      match.myAttemptStatus === 'playing'
+        ? 'Continue'
+        : match.myAttemptStatus === 'not-started'
+          ? 'Play'
+          : null;
     if (label) {
       this.createButton(width - 72, y + 67, label, () => {
-        if (match.status === 'active') {
-          this.scene.start('VersusGame', { matchId: match.matchId });
-        } else {
-          this.openResult(match);
-        }
-      });
-    }
-    if (match.status !== 'active') {
-      this.createButton(width - 178, y + 67, 'Rematch', () => {
-        this.pickerMode = 'rematch-request';
-        this.pickerMatchId = match.matchId;
-        this.selectedKeys.clear();
-        this.status = `Pick ${VERSUS_PATTERN_SIZE} connected tiles.`;
-        this.render();
+        this.scene.start('VersusGame', { matchId: match.matchId });
       });
     }
   }
 
-  private drawPendingCard(item: VersusPendingItem, color: number, y: number): void {
+  private drawPendingCard(item: VersusPendingItem, color: number, y: number): number {
     if (item.kind === 'invite') {
-      this.drawInviteCard(item.invite, color, y);
-    } else {
-      this.drawRematchCard(item.rematch, color, y);
+      return this.drawInviteCard(item.invite, color, y);
     }
+    this.drawRematchCard(item.rematch, color, y);
+    return 92;
   }
 
-  private drawInviteCard(invite: VersusInviteSummary, color: number, y: number): void {
+  private drawInviteCard(invite: VersusInviteSummary, color: number, y: number): number {
     const width = this.scale.width;
-    this.drawCardPanel(color, y, 92);
-    const title = invite.role === 'creator' ? 'Invitation' : `From ${invite.creatorDisplayName}`;
+    const openCreator = invite.role === 'creator' && invite.status === 'open';
+    const mobileActions = openCreator && width < 500;
+    const cardHeight = mobileActions ? 150 : openCreator || invite.role === 'acceptor' ? 118 : 92;
+    this.drawCardPanel(color, y, cardHeight);
+    const title = invite.role === 'creator'
+      ? 'Open invitation'
+      : `Invitation from ${invite.creatorDisplayName}`;
     const body =
       invite.role === 'acceptor'
-        ? 'Invitation accepted · choose your pattern'
+        ? 'Invitation accepted — choose your pattern'
         : invite.status === 'accepted-awaiting-pattern'
-          ? `${invite.acceptedByDisplayName ?? 'A player'} accepted · waiting for their pattern`
-          : 'Invite link ready · waiting for someone to accept';
+          ? `${invite.acceptedByDisplayName ?? 'A player'} accepted — waiting for their pattern`
+          : 'Invite link ready. Waiting for opponent to accept.';
     this.add.text(30, y + 20, title, this.cardTitleStyle()).setOrigin(0, 0.5);
-    this.add.text(30, y + 48, body, this.cardBodyStyle()).setOrigin(0, 0.5);
+    this.add
+      .text(30, y + 49, body, {
+        ...this.cardBodyStyle(),
+        wordWrap: { width: width - 60 },
+      })
+      .setOrigin(0, 0.5);
     if (invite.role === 'acceptor') {
-      this.createButton(width - 78, y + 68, 'Choose Pattern', () => {
+      this.createButton(width / 2 - 70, y + 91, 'Choose Pattern', () => {
         this.pickerMode = 'invite-answer';
         this.pickerInviteId = invite.inviteId;
         this.selectedKeys.clear();
         this.render();
       });
-      this.createButton(width - 210, y + 68, 'Release', () => void this.releaseInvite(invite.inviteId));
+      this.createButton(width / 2 + 70, y + 91, 'Release', () => void this.releaseInvite(invite.inviteId), 'decline');
     } else if (invite.status === 'open') {
-      this.createButton(width - 62, y + 68, 'Cancel', () => void this.cancelInvite(invite.inviteId));
-      this.createButton(width - 154, y + 68, 'Copy Code', () => void this.copyInviteCode(invite.inviteCode));
-      this.createButton(width - 258, y + 68, 'Share Again', () => void this.shareInvite(invite));
+      if (mobileActions) {
+        const actionWidth = (width - 42) / 2;
+        this.createButton(18 + actionWidth / 2, y + 91, 'Share Again', () => void this.shareInvite(invite), 'blue', actionWidth);
+        this.createButton(24 + actionWidth * 1.5, y + 91, 'Copy Code', () => void this.copyInviteCode(invite.inviteCode), 'neutral', actionWidth);
+        this.createButton(width / 2, y + 132, 'Cancel', () => void this.cancelInvite(invite.inviteId), 'decline', actionWidth);
+      } else {
+        const actionWidth = Math.min(116, (width - 42) / 3);
+        const start = width / 2 - actionWidth - 4;
+        this.createButton(start, y + 91, 'Share Again', () => void this.shareInvite(invite), 'blue', actionWidth);
+        this.createButton(width / 2, y + 91, 'Copy Code', () => void this.copyInviteCode(invite.inviteCode), 'neutral', actionWidth);
+        this.createButton(width / 2 + actionWidth + 4, y + 91, 'Cancel', () => void this.cancelInvite(invite.inviteId), 'decline', actionWidth);
+      }
     }
+    return cardHeight;
   }
 
   private drawRematchCard(rematch: VersusRematchSummary, color: number, y: number): void {
     const width = this.scale.width;
     this.drawCardPanel(color, y, 92);
     this.add
-      .text(30, y + 20, `Rematch · ${rematch.opponentDisplayName}`, this.cardTitleStyle())
+      .text(
+        30,
+        y + 20,
+        rematch.role === 'requester'
+          ? `Invitation to ${rematch.opponentDisplayName}`
+          : `Invitation from ${rematch.opponentDisplayName}`,
+        this.cardTitleStyle()
+      )
       .setOrigin(0, 0.5);
     const body =
       rematch.role === 'requester'
         ? rematch.status === 'accepted-awaiting-pattern'
-          ? `${rematch.opponentDisplayName} accepted · waiting for their pattern`
-          : `Request sent · waiting for ${rematch.opponentDisplayName}`
+          ? `${rematch.opponentDisplayName} accepted — waiting for their pattern`
+          : `Waiting for ${rematch.opponentDisplayName} to accept.`
         : rematch.status === 'accepted-awaiting-pattern'
-          ? 'Rematch accepted · choose your pattern'
-          : `${rematch.opponentDisplayName} wants a rematch`;
+          ? 'Invitation accepted — choose your pattern.'
+          : `${rematch.opponentDisplayName} invited you to play again.`;
     this.add.text(30, y + 48, body, this.cardBodyStyle()).setOrigin(0, 0.5);
     if (rematch.role === 'responder') {
       if (rematch.status === 'pending') {
@@ -608,10 +604,6 @@ export class VersusLobby extends Scene {
       this.createButton(width / 2 + 70, y + 68, 'Decline', () => void this.updateRematch(rematch, 'decline'), 'decline');
     } else if (rematch.status === 'pending') {
       this.createButton(width - 72, y + 68, 'Cancel', () => void this.updateRematch(rematch, 'cancel'));
-    }
-    const source = this.lobby?.matches.find((match) => match.matchId === rematch.sourceMatchId);
-    if (source) {
-      this.createButton(width - 62, y + 20, 'Result', () => this.openResult(source));
     }
   }
 
@@ -633,27 +625,24 @@ export class VersusLobby extends Scene {
   private drawPatternPicker(): void {
     const width = this.scale.width;
     const height = this.scale.height;
-    const title =
-      this.pickerMode === 'invite-create'
-        ? 'Choose a pattern to invite a friend'
-        : this.pickerMode === 'invite-answer'
-          ? 'Choose your invitation pattern'
-          : this.pickerMode === 'rematch-request'
-            ? 'Choose your rematch pattern'
-            : this.pickerMode === 'rematch-answer'
-              ? 'Answer the rematch'
-              : 'Choose your public pattern';
     const size = Math.min(width - 34, height - 220, 370);
     const cell = size / 5;
     const startX = (width - size) / 2;
     const startY = 126;
     this.add
-      .text(width / 2, 82, `${title} (${VERSUS_PATTERN_SIZE} connected tiles)`, {
+      .text(width / 2, 78, 'Choose Your Pattern', {
         fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: width < 700 ? '16px' : '19px',
+        fontSize: width < 700 ? '18px' : '21px',
         color: '#18212b',
         align: 'center',
         wordWrap: { width: width - 28 },
+      })
+      .setOrigin(0.5);
+    this.add
+      .text(width / 2, 103, `Select ${VERSUS_PATTERN_SIZE} connected tiles.`, {
+        fontFamily: 'Arial Black, Arial, sans-serif',
+        fontSize: '13px',
+        color: '#53606b',
       })
       .setOrigin(0.5);
     for (let row = 0; row < 5; row += 1) {
@@ -693,14 +682,20 @@ export class VersusLobby extends Scene {
       }
     }
     const controlsY = startY + size + 34;
-    this.createButton(width / 2 - 88, controlsY, 'Clear', () => {
+    const validPattern = validateVersusPattern(this.selectedPattern()).valid;
+    const controlWidth = Math.min(108, (width - 44) / 3);
+    const controlGap = controlWidth + 6;
+    this.createButton(width / 2 - controlGap, controlsY, 'Back', (pointer) => {
+      this.goBack(pointer);
+    }, 'orange', controlWidth);
+    this.createButton(width / 2, controlsY, 'Clear', () => {
       this.selectedKeys.clear();
       this.status = `Pick ${VERSUS_PATTERN_SIZE} connected tiles.`;
       this.render();
-    });
-    this.createButton(width / 2 + 88, controlsY, this.loading ? 'Submitting...' : 'Submit', () => {
+    }, 'decline', controlWidth);
+    this.createButton(width / 2 + controlGap, controlsY, this.loading ? 'Submitting...' : 'Submit', () => {
       void this.submitPattern();
-    });
+    }, 'accept', controlWidth, !validPattern || this.loading);
     this.add
       .text(width / 2, controlsY + 42, this.status, {
         fontFamily: 'Arial, sans-serif', fontSize: '15px', color: '#33404c',
@@ -714,7 +709,7 @@ export class VersusLobby extends Scene {
   private drawInvitePrompt(invite: VersusInviteSummary): void {
     const modal = this.drawModal(300);
     this.add
-      .text(this.scale.width / 2, modal.y + 46, 'Versus invitation', this.modalTitleStyle())
+      .text(this.scale.width / 2, modal.y + 46, 'Versus Invitation', this.modalTitleStyle())
       .setOrigin(0.5);
     this.add
       .text(
@@ -725,7 +720,7 @@ export class VersusLobby extends Scene {
       )
       .setOrigin(0.5);
     this.add
-      .text(this.scale.width / 2, modal.y + 162, 'Accept first, then submit your own pattern.', this.modalBodyStyle(modal.width - 40))
+      .text(this.scale.width / 2, modal.y + 162, 'Accept to choose your own 6-tile pattern and start the challenge.', this.modalBodyStyle(modal.width - 40))
       .setOrigin(0.5);
     this.createButton(this.scale.width / 2 - 82, modal.y + 244, 'Accept', () => {
       void this.acceptInvite(invite.inviteId);
@@ -762,7 +757,7 @@ export class VersusLobby extends Scene {
     const modalHeight = Math.min(this.scale.height - 30, 520);
     const modal = this.drawModal(modalHeight);
     this.add
-      .text(this.scale.width / 2, modal.y + 36, 'Find an opponent', this.modalTitleStyle())
+      .text(this.scale.width / 2, modal.y + 36, 'Search History', this.modalTitleStyle())
       .setOrigin(0.5);
     const graphics = this.add.graphics();
     graphics.fillStyle(COLORS.paper, 1);
@@ -770,11 +765,11 @@ export class VersusLobby extends Scene {
     graphics.lineStyle(2, COLORS.line, 1);
     graphics.strokeRoundedRect(modal.x + 24, modal.y + 67, modal.width - 48, 46, 8);
     this.add
-      .text(modal.x + 38, modal.y + 90, this.opponentQuery || 'Type a Reddit handle', {
-        fontFamily: 'Arial, sans-serif', fontSize: '17px',
-        color: this.opponentQuery ? '#18212b' : '#8b929b',
+      .text(modal.x + 38, modal.y + 90, '', {
+        fontFamily: 'Arial, sans-serif', fontSize: '17px', color: '#18212b',
       })
       .setOrigin(0, 0.5);
+    this.showCodeInput(modal.x + 24, modal.y + 67, modal.width - 48, 46);
     const maxRows = Math.max(2, Math.min(5, Math.floor((modalHeight - 190) / 57)));
     const results = this.filteredOpponents().slice(0, maxRows);
     if (results.length === 0) {
@@ -792,9 +787,7 @@ export class VersusLobby extends Scene {
           fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#18212b',
         })
         .setOrigin(0, 0.5);
-      this.add
-        .text(modal.x + 36, rowY + 34, `${opponent.wins}-${opponent.losses}${opponent.draws ? ` · ${opponent.draws}D` : ''}`, this.cardBodyStyle())
-        .setOrigin(0, 0.5);
+      drawPlainRivalryRecord(this, modal.x + 83, rowY + 34, opponent, 11);
       this.drawOutcomeDots(modal.x + modal.width - 130, rowY + 25, opponent.recentOutcomes);
       this.add
         .zone(modal.x + 24, rowY, modal.width - 48, 48)
@@ -808,26 +801,32 @@ export class VersusLobby extends Scene {
     });
   }
 
-  private drawOpponentHistoryModal(): void {
+  private drawOpponentHistoryScreen(): void {
     const opponent = this.selectedOpponent;
     if (!opponent) {
       return;
     }
-    const modalHeight = Math.min(this.scale.height - 30, 570);
-    const modal = this.drawModal(modalHeight);
+    const width = this.scale.width;
+    drawRaisedPanel(this, 14, 68, width - 28, 112, COLORS.results);
+    this.createButton(62, 89, 'Back', () => {
+      this.selectedOpponent = null;
+      this.opponentHistory = [];
+      this.historyPage = 0;
+      this.cameras.main.scrollY = 0;
+      this.render();
+    }, 'orange', 82);
     this.add
-      .text(this.scale.width / 2, modal.y + 32, opponent.opponentDisplayName, this.modalTitleStyle())
+      .text(width / 2, 89, opponent.opponentDisplayName, {
+        ...this.modalTitleStyle(),
+        fontSize: width < 430 ? '18px' : '22px',
+        wordWrap: { width: Math.max(130, width - 210) },
+        align: 'center',
+      })
       .setOrigin(0.5);
-    this.add
-      .text(
-        this.scale.width / 2,
-        modal.y + 63,
-        `You ${opponent.wins} - ${opponent.losses}${opponent.draws ? ` · ${opponent.draws} draws` : ''}`,
-        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#f28d13' }
-      )
-      .setOrigin(0.5);
-    this.drawOutcomeDots(this.scale.width / 2 - 40, modal.y + 91, opponent.recentOutcomes);
-    const pageSize = Math.max(2, Math.min(6, Math.floor((modalHeight - 180) / 57)));
+    drawPlainRivalryRecord(this, width / 2, 119, opponent, 14);
+    this.drawOutcomeDots(width / 2 - 40, 149, opponent.recentOutcomes);
+    let y = this.drawSectionHeader('Matches', COLORS.results, 194);
+    const pageSize = Math.max(3, Math.min(7, Math.floor((this.scale.height - 280) / 64)));
     const pageCount = Math.max(1, Math.ceil(this.opponentHistory.length / pageSize));
     this.historyPage = Math.min(this.historyPage, pageCount - 1);
     const entries = this.opponentHistory.slice(
@@ -835,32 +834,40 @@ export class VersusLobby extends Scene {
       (this.historyPage + 1) * pageSize
     );
     entries.forEach((entry, index) => {
-      const rowY = modal.y + 119 + index * 57;
-      this.drawHistoryRow(modal.x + 24, rowY, modal.width - 48, entry);
+      const rowY = y + index * 64;
+      this.drawHistoryRow(14, rowY, width - 28, entry);
     });
     if (entries.length === 0) {
       this.add
-        .text(this.scale.width / 2, modal.y + 160, 'No compact match history is available yet.', this.modalBodyStyle(modal.width - 40))
+        .text(width / 2, y + 34, 'No match history is available yet.', this.modalBodyStyle(width - 40))
         .setOrigin(0.5);
     }
-    const controlsY = modal.y + modalHeight - 30;
+    y += Math.max(1, entries.length) * 64 + 18;
+    const controlsY = y;
     if (this.historyPage > 0) {
-      this.createButton(this.scale.width / 2 - 120, controlsY, 'Newer', () => {
+      this.createButton(width / 2 - 80, controlsY, 'Newer', () => {
         this.historyPage -= 1;
+        this.cameras.main.scrollY = 0;
         this.render();
-      });
+      }, 'blue', 112);
     }
-    this.createButton(this.scale.width / 2, controlsY, 'Close', () => {
-      this.selectedOpponent = null;
-      this.opponentHistory = [];
-      this.render();
-    });
     if (this.historyPage + 1 < pageCount) {
-      this.createButton(this.scale.width / 2 + 120, controlsY, 'Older', () => {
+      this.createButton(width / 2 + 80, controlsY, 'Older', () => {
         this.historyPage += 1;
+        this.cameras.main.scrollY = 0;
         this.render();
-      });
+      }, 'blue', 112);
     }
+    this.add
+      .text(width / 2, controlsY + 33, this.status, {
+        ...this.cardBodyStyle(),
+        align: 'center',
+        wordWrap: { width: width - 30 },
+      })
+      .setOrigin(0.5, 0);
+    this.contentHeight = Math.max(this.scale.height, controlsY + 82);
+    this.cameras.main.setBounds(0, 0, width, this.contentHeight);
+    this.setScroll(this.cameras.main.scrollY);
   }
 
   private drawHistoryRow(
@@ -871,36 +878,146 @@ export class VersusLobby extends Scene {
   ): void {
     const graphics = this.add.graphics();
     graphics.fillStyle(COLORS.paper, 0.92);
-    graphics.fillRoundedRect(x, y, width, 48, 7);
-    const color = entry.outcome === 'win' ? '#218c4a' : entry.outcome === 'loss' ? '#c83d3d' : '#7b8490';
+    graphics.fillRoundedRect(x, y, width, 56, 7);
+    const outcomeColor =
+      entry.outcome === 'win'
+        ? COLORS.green
+        : entry.outcome === 'loss'
+          ? COLORS.red
+          : COLORS.orange;
+    const color = entry.outcome === 'win' ? '#218c4a' : entry.outcome === 'loss' ? '#c83d3d' : '#a66b00';
+    graphics.lineStyle(3, outcomeColor, 0.9);
+    graphics.strokeRoundedRect(x, y, width, 56, 7);
+    graphics.fillStyle(outcomeColor, 1);
+    graphics.fillRoundedRect(x + 8, y + 13, 30, 30, 6);
     this.add
-      .text(x + 12, y + 15, entry.outcome.toUpperCase(), {
-        fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '13px', color,
+      .text(x + 23, y + 28, entry.outcome.charAt(0).toUpperCase(), {
+        fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    this.add
+      .text(x + width - 12, y + 17, new Date(entry.completedAt).toLocaleDateString(), this.cardBodyStyle())
+      .setOrigin(1, 0.5);
+    this.add
+      .text(x + 48, y + 38, this.historyScoreText(entry), {
+        ...this.cardBodyStyle(),
+        color,
+        wordWrap: { width: width - 66 },
       })
       .setOrigin(0, 0.5);
     this.add
-      .text(x + width - 12, y + 15, new Date(entry.completedAt).toLocaleDateString(), this.cardBodyStyle())
-      .setOrigin(1, 0.5);
-    this.add
-      .text(x + 12, y + 35, this.historyScoreText(entry), this.cardBodyStyle())
-      .setOrigin(0, 0.5);
+      .zone(x, y, width, 56)
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => graphics.setAlpha(0.72))
+      .on('pointerout', () => graphics.setAlpha(1))
+      .on('pointerup', () => {
+        graphics.setAlpha(1);
+        void this.openHistoryResult(entry);
+      });
   }
 
   private drawRewardModal(): void {
     if (!this.lobby) {
       return;
     }
-    const modal = this.drawModal(220);
-    const amount = this.lobby.pendingRewards.reduce((sum, reward) => sum + reward.amount, 0);
+    const modal = this.drawModal(260);
+    const rewards = [...this.lobby.pendingRewards].sort(
+      (first, second) => first.createdAt - second.createdAt
+    );
+    const amount = rewards.reduce((sum, reward) => sum + reward.amount, 0);
+    const firstReward = rewards[0];
+    const lastReward = rewards.at(-1);
+    const initial = firstReward
+      ? summarizeProgress({
+          ...this.lobby.progress,
+          totalXp: firstReward.previousTotalXp,
+        })
+      : this.lobby.progress;
     this.add
-      .text(this.scale.width / 2, modal.y + 45, 'Progress updated', this.modalTitleStyle())
+      .text(this.scale.width / 2, modal.y + 38, 'XP Earned', this.modalTitleStyle())
       .setOrigin(0.5);
     this.add
-      .text(this.scale.width / 2, modal.y + 105, `+${amount} XP`, {
-        fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '34px', color: '#35a866',
+      .text(this.scale.width / 2, modal.y + 78, `Level ${initial.level}`, {
+        fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '20px', color: '#25313b',
       })
+      .setName('reward-level')
       .setOrigin(0.5);
-    this.createButton(this.scale.width / 2, modal.y + 172, 'Continue', () => void this.dismissRewards());
+    this.add
+      .text(
+        this.scale.width / 2,
+        modal.y + 108,
+        `${initial.levelXp}/${initial.xpForNextLevel} XP · +${amount} XP`,
+        { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '13px', color: '#53606b' }
+      )
+      .setName('reward-xp')
+      .setOrigin(0.5);
+    const barX = modal.x + 28;
+    const barY = modal.y + 130;
+    const barWidth = modal.width - 56;
+    const bar = this.add.graphics();
+    bar.fillStyle(0xd8d0c5, 1);
+    bar.fillRoundedRect(barX, barY, barWidth, 14, 7);
+    bar.lineStyle(1, COLORS.line, 0.3);
+    bar.strokeRoundedRect(barX, barY, barWidth, 14, 7);
+    const fill = this.add
+      .rectangle(barX, barY + 7, barWidth, 12, COLORS.green)
+      .setOrigin(0, 0.5);
+    const finalProgress = this.lobby.progress;
+    if (this.rewardAnimationComplete || !firstReward || !lastReward) {
+      fill.setScale(finalProgress.levelXp / finalProgress.xpForNextLevel, 1);
+    } else {
+      const segments = buildXpAnimationSegments(
+        firstReward.previousTotalXp,
+        lastReward.newTotalXp
+      );
+      this.animateRewardSegments(segments, 0, fill, amount);
+    }
+    this.createButton(
+      this.scale.width / 2,
+      modal.y + 215,
+      'Continue',
+      () => void this.dismissRewards(),
+      'accept',
+      116,
+      !this.rewardAnimationComplete
+    );
+  }
+
+  private animateRewardSegments(
+    segments: ReturnType<typeof buildXpAnimationSegments>,
+    index: number,
+    fill: GameObjects.Rectangle,
+    amount: number
+  ): void {
+    const segment = segments[index];
+    const levelLabel = this.children.getByName('reward-level');
+    const xpLabel = this.children.getByName('reward-xp');
+    if (!segment) {
+      this.rewardAnimationComplete = true;
+      if (this.scene.isActive()) {
+        this.render();
+      }
+      return;
+    }
+    if (levelLabel instanceof GameObjects.Text) {
+      levelLabel.setText(`Level ${segment.level}`);
+    }
+    fill.setScale(segment.fromXp / segment.xpForNextLevel, 1);
+    this.tweens.add({
+      targets: fill,
+      scaleX: segment.toXp / segment.xpForNextLevel,
+      duration: 650,
+      ease: 'Sine.easeOut',
+      onUpdate: () => {
+        if (xpLabel instanceof GameObjects.Text) {
+          xpLabel.setText(
+            `${Math.round(segment.xpForNextLevel * fill.scaleX)}/${segment.xpForNextLevel} XP · +${amount} XP`
+          );
+        }
+      },
+      onComplete: () => this.animateRewardSegments(segments, index + 1, fill, amount),
+    });
   }
 
   private drawModal(height: number): { x: number; y: number; width: number } {
@@ -915,21 +1032,13 @@ export class VersusLobby extends Scene {
     return { x, y, width };
   }
 
-  private handleCodeKey(event: KeyboardEvent): void {
-    if (this.opponentSearchVisible && !this.selectedOpponent) {
-      if (event.key === 'Backspace') {
-        this.opponentQuery = this.opponentQuery.slice(0, -1);
-      } else if (event.key.length === 1 && this.opponentQuery.length < 24) {
-        this.opponentQuery += event.key;
-      } else {
-        return;
-      }
-      this.render();
-    }
-  }
-
   private handleCodeInput = (): void => {
     if (!this.codeInput) {
+      return;
+    }
+    if (this.opponentSearchVisible && !this.selectedOpponent) {
+      this.opponentQuery = this.codeInput.value.slice(0, 24);
+      this.render();
       return;
     }
     const normalized = this.codeInput.value
@@ -943,9 +1052,19 @@ export class VersusLobby extends Scene {
   };
 
   private handleCodeInputKey = (event: KeyboardEvent): void => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && this.codeEntryVisible) {
       event.preventDefault();
       void this.openInviteCode();
+    } else if (
+      event.key === 'Enter' &&
+      this.opponentSearchVisible &&
+      !this.selectedOpponent
+    ) {
+      const opponent = this.filteredOpponents()[0];
+      if (opponent) {
+        event.preventDefault();
+        void this.openOpponentHistory(opponent);
+      }
     }
   };
 
@@ -956,7 +1075,15 @@ export class VersusLobby extends Scene {
     const bounds = this.game.canvas.getBoundingClientRect();
     const scaleX = bounds.width / this.scale.width;
     const scaleY = bounds.height / this.scale.height;
-    this.codeInput.value = this.inviteCode;
+    const historyMode = this.opponentSearchVisible && !this.selectedOpponent;
+    this.codeInput.value = historyMode ? this.opponentQuery : this.inviteCode;
+    this.codeInput.maxLength = historyMode ? 24 : 12;
+    this.codeInput.placeholder = historyMode ? 'Search past opponents' : 'TYPE CODE';
+    this.codeInput.setAttribute(
+      'aria-label',
+      historyMode ? 'Search past opponents' : 'Versus invitation code'
+    );
+    this.codeInput.classList.toggle('is-history', historyMode);
     this.codeInput.style.left = `${bounds.left + x * scaleX}px`;
     this.codeInput.style.top = `${bounds.top + (y - this.cameras.main.scrollY) * scaleY}px`;
     this.codeInput.style.width = `${width * scaleX}px`;
@@ -969,12 +1096,14 @@ export class VersusLobby extends Scene {
 
   private hideCodeInput(): void {
     this.codeInput?.classList.remove('is-visible');
+    this.codeInput?.classList.remove('is-history');
     this.codeInput?.blur();
   }
 
   private async refreshLobby(matchmake: boolean): Promise<void> {
     if (
       this.loading ||
+      this.rewardVisible ||
       this.pickerMode ||
       this.incomingInvite ||
       this.codeEntryVisible ||
@@ -998,7 +1127,7 @@ export class VersusLobby extends Scene {
       this.rewardVisible = this.rewardVisible || data.pendingRewards.length > 0;
       this.status = newMatch
         ? `Match ready vs ${newMatch.opponentDisplayName}.`
-        : 'Versus is up to date.';
+        : '';
     } catch (error) {
       if (!this.lobby && isLocalPreview()) {
         this.lobby = {
@@ -1063,11 +1192,15 @@ export class VersusLobby extends Scene {
           return;
         }
       } else if (this.pickerMode === 'rematch-request' && this.pickerMatchId) {
-        await createRematchRequest(this.pickerMatchId, pattern);
-        this.status = 'Rematch request sent.';
+        const response = await createRematchRequest(this.pickerMatchId, pattern);
+        if (response.matchedMatchId) {
+          this.scene.start('VersusGame', { matchId: response.matchedMatchId });
+          return;
+        }
+        this.status = 'Invitation sent. Waiting for your opponent.';
       } else if (this.pickerMode === 'public') {
         await postVersusLobby('/api/versus/round', { pattern });
-        this.status = 'Looking for an opponent. You can safely leave.';
+        this.status = 'Your pattern is waiting for a challenger. Play on your own time.';
       }
       this.clearPicker();
       this.loading = false;
@@ -1092,7 +1225,7 @@ export class VersusLobby extends Scene {
         if (match?.status === 'active' && match.myAttemptStatus !== 'solved') {
           this.scene.start('VersusGame', { matchId: response.matchedMatchId });
         } else {
-          this.status = 'This invitation is already in your Waiting or Results history.';
+          this.status = 'This invitation is already in Active Matches or Results.';
         }
         return;
       }
@@ -1168,7 +1301,8 @@ export class VersusLobby extends Scene {
   }
 
   private async openOpponentHistory(
-    opponent: RivalryOpponentSummary
+    opponent: RivalryOpponentSummary,
+    page = 0
   ): Promise<void> {
     if (this.loading) {
       return;
@@ -1178,12 +1312,45 @@ export class VersusLobby extends Scene {
       const response = await getVersusRivalryHistory(opponent.opponentUserId);
       this.selectedOpponent = response.opponent;
       this.opponentHistory = response.history;
-      this.historyPage = 0;
+      const pageSize = Math.max(3, Math.min(7, Math.floor((this.scale.height - 280) / 64)));
+      const pageCount = Math.max(1, Math.ceil(response.history.length / pageSize));
+      this.historyPage = PhaserMath.Clamp(page, 0, pageCount - 1);
+      this.opponentSearchVisible = false;
+      this.cameras.main.scrollY = 0;
     } catch (error) {
       this.status = clientErrorMessage(error);
     } finally {
       this.loading = false;
       this.render();
+    }
+  }
+
+  private async openHistoryResult(entry: RivalryHistoryEntry): Promise<void> {
+    if (this.loading || !this.selectedOpponent) {
+      return;
+    }
+    this.loading = true;
+    this.status = 'Loading match details...';
+    this.render();
+    try {
+      const response = await getVersusResult(entry.matchId);
+      this.scene.start('VersusResult', {
+        match: response.match,
+        ...(this.lobby?.progress ? { progress: this.lobby.progress } : {}),
+        completedAt: entry.completedAt,
+        historyReturn: {
+          opponent: this.selectedOpponent,
+          page: this.historyPage,
+        },
+      });
+      return;
+    } catch {
+      this.status = 'Detailed replay is no longer available.';
+    } finally {
+      this.loading = false;
+      if (this.scene.isActive()) {
+        this.render();
+      }
     }
   }
 
@@ -1198,12 +1365,12 @@ export class VersusLobby extends Scene {
 
   private historyScoreText(entry: RivalryHistoryEntry): string {
     const mine = entry.myScore
-      ? `${entry.myScore.guesses} guesses · ${formatDuration(entry.myScore.durationMs)}`
-      : 'You did not finish';
+      ? `${entry.myScore.guesses}g ${formatDuration(entry.myScore.durationMs)}`
+      : '—';
     const theirs = entry.opponentScore
-      ? `${entry.opponentScore.guesses} guesses · ${formatDuration(entry.opponentScore.durationMs)}`
-      : 'opponent did not finish';
-    return `${mine} / ${theirs}`;
+      ? `${entry.opponentScore.guesses}g ${formatDuration(entry.opponentScore.durationMs)}`
+      : '—';
+    return `You ${mine} / Them ${theirs}`;
   }
 
   private async acceptRematch(rematch: VersusRematchSummary): Promise<void> {
@@ -1239,7 +1406,7 @@ export class VersusLobby extends Scene {
     this.loading = true;
     try {
       await updateRematchRequest(rematch.sourceMatchId, rematch.requestId, action);
-      this.status = action === 'cancel' ? 'Rematch request cancelled.' : 'Rematch declined.';
+      this.status = action === 'cancel' ? 'Invitation cancelled.' : 'Invitation declined.';
       this.loading = false;
       await this.refreshLobby(false);
     } catch (error) {
@@ -1282,11 +1449,11 @@ export class VersusLobby extends Scene {
 
   private async shareInvite(invite: VersusInviteSummary): Promise<void> {
     await showShareSheet({
-      title: 'Pattern Tiles challenge',
+      title: 'TILEWARS invitation',
       text: `I made a hidden pattern for you. Invite code: ${invite.inviteCode}`,
       data: JSON.stringify({ type: 'pattern-invite', inviteId: invite.inviteId }),
     });
-    this.status = 'Invite link ready. Waiting for someone to accept.';
+    this.status = 'Invite link ready. Waiting for opponent to accept.';
   }
 
   private async copyInviteCode(inviteCode: string): Promise<void> {
@@ -1318,6 +1485,7 @@ export class VersusLobby extends Scene {
     }
     const rewardIds = this.lobby.pendingRewards.map((reward) => reward.rewardId);
     this.rewardVisible = false;
+    this.rewardAnimationComplete = false;
     this.lobby = { ...this.lobby, pendingRewards: [] };
     this.render();
     try {
@@ -1380,11 +1548,7 @@ export class VersusLobby extends Scene {
   }
 
   private sourceLabel(source: VersusMatchSummary['source']): string {
-    return source === 'public' ? 'Public match' : source === 'invite' ? 'Invitation' : 'Rematch';
-  }
-
-  private openResult(match: VersusMatchSummary): void {
-    this.scene.start('VersusResult', { match, progress: this.lobby?.progress });
+    return source === 'public' ? 'Public match' : 'Invitation';
   }
 
   private createButton(
@@ -1392,66 +1556,28 @@ export class VersusLobby extends Scene {
     y: number,
     label: string,
     onClick: (pointer: Input.Pointer) => void,
-    variant: 'neutral' | 'accept' | 'decline' | 'blue' | 'orange' = 'neutral'
-  ): void {
-    const width = Math.max(78, Math.min(126, label.length * 7 + 28));
-    const backgroundColor =
-      variant === 'accept'
-        ? COLORS.green
-        : variant === 'decline'
-          ? COLORS.red
-          : variant === 'blue'
-            ? COLORS.blue
-            : variant === 'orange'
-              ? COLORS.orange
-              : COLORS.line;
-    const hoverColor =
-      variant === 'accept'
-        ? 0x27bf7d
-        : variant === 'decline'
-          ? 0xff6878
-          : variant === 'blue'
-            ? 0x5bb4ff
-            : variant === 'orange'
-              ? 0xffc45c
-              : 0x354555;
-    const graphics = this.add.graphics();
-    const buttonLabel = this.add
-      .text(x, y, label, {
-        fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '12px', color: '#ffffff',
-      })
-      .setOrigin(0.5);
-    const drawButton = (color: number, offset: number): void => {
-      graphics.clear();
-      graphics.fillStyle(COLORS.shadow, 0.2);
-      graphics.fillRoundedRect(x - width / 2 + 3, y - 13 + 5, width, 32, 7);
-      graphics.fillStyle(color, 1);
-      graphics.fillRoundedRect(x - width / 2, y - 16 + offset, width, 32, 7);
-      graphics.lineStyle(2, COLORS.line, 0.75);
-      graphics.strokeRoundedRect(x - width / 2, y - 16 + offset, width, 32, 7);
-      buttonLabel.setY(y + offset);
-    };
-    drawButton(backgroundColor, 0);
-    this.add
-      .zone(x - width / 2, y - 16, width, 32)
-      .setOrigin(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerover', () => drawButton(hoverColor, -2))
-      .on('pointerout', () => drawButton(backgroundColor, 0))
-      .on('pointerdown', () => drawButton(backgroundColor, 3))
-      .on('pointerup', (pointer: Input.Pointer) => {
-        drawButton(hoverColor, -2);
-        onClick(pointer);
-      });
-  }
-
-  private drawCenteredMessage(message: string): void {
-    this.add
-      .text(this.scale.width / 2, this.scale.height / 2, message, {
-        fontFamily: 'Arial, sans-serif', fontSize: '18px', color: '#33404c',
-        align: 'center', wordWrap: { width: this.scale.width - 40 },
-      })
-      .setOrigin(0.5);
+    variant: 'neutral' | 'accept' | 'decline' | 'blue' | 'orange' = 'neutral',
+    width?: number,
+    disabled = false
+  ): GameObjects.Container {
+    return drawTileButton(this, {
+      x,
+      y,
+      label,
+      onClick,
+      variant:
+        variant === 'accept'
+          ? 'green'
+          : variant === 'decline'
+            ? 'red'
+            : variant === 'neutral'
+              ? 'dark'
+              : variant,
+      ...(width === undefined ? {} : { width }),
+      height: 34,
+      fontSize: 12,
+      disabled,
+    });
   }
 
   private headerStyle(color = '#18212b'): Types.GameObjects.Text.TextStyle {

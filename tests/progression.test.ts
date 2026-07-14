@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   activeDailyStreak,
+  buildXpAnimationSegments,
   createInitialProgress,
   dailyXpForStreak,
   nextDailyStreak,
+  rivalryOutcomeColor,
+  rivalryOutcomeSlots,
   summarizeProgress,
   versusXpForResult,
   xpRequiredForLevel,
@@ -47,5 +50,80 @@ describe('progression', () => {
     expect(versusXpForResult('loss', true)).toBe(40);
     expect(versusXpForResult('loss', false)).toBe(0);
     expect(versusXpForResult('no-contest', false)).toBe(0);
+  });
+
+  it('builds XP animation segments across a level boundary', () => {
+    expect(buildXpAnimationSegments(100, 150)).toEqual([
+      {
+        level: 1,
+        fromXp: 100,
+        toXp: 150,
+        xpForNextLevel: 300,
+        completesLevel: false,
+      },
+    ]);
+    expect(buildXpAnimationSegments(250, 300)).toEqual([
+      {
+        level: 1,
+        fromXp: 250,
+        toXp: 300,
+        xpForNextLevel: 300,
+        completesLevel: true,
+      },
+    ]);
+    expect(buildXpAnimationSegments(280, 330)).toEqual([
+      {
+        level: 1,
+        fromXp: 280,
+        toXp: 300,
+        xpForNextLevel: 300,
+        completesLevel: true,
+      },
+      {
+        level: 2,
+        fromXp: 0,
+        toXp: 30,
+        xpForNextLevel: 350,
+        completesLevel: false,
+      },
+    ]);
+    expect(buildXpAnimationSegments(280, 700)).toEqual([
+      {
+        level: 1,
+        fromXp: 280,
+        toXp: 300,
+        xpForNextLevel: 300,
+        completesLevel: true,
+      },
+      {
+        level: 2,
+        fromXp: 0,
+        toXp: 350,
+        xpForNextLevel: 350,
+        completesLevel: true,
+      },
+      {
+        level: 3,
+        fromXp: 0,
+        toXp: 50,
+        xpForNextLevel: 400,
+        completesLevel: false,
+      },
+    ]);
+    expect(buildXpAnimationSegments(100, 100)).toEqual([]);
+  });
+
+  it('pads recent rivalry outcomes to five chronological slots', () => {
+    expect(rivalryOutcomeSlots(['win', 'draw', 'loss'])).toEqual([
+      'win',
+      'draw',
+      'loss',
+      null,
+      null,
+    ]);
+    expect(rivalryOutcomeColor('win')).toBe('green');
+    expect(rivalryOutcomeColor('loss')).toBe('red');
+    expect(rivalryOutcomeColor('draw')).toBe('orange');
+    expect(rivalryOutcomeColor(null)).toBe('cream');
   });
 });

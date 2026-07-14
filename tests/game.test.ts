@@ -2,13 +2,30 @@ import { describe, expect, it } from 'vitest';
 import {
   applyGuessToSession,
   createCustomPuzzleId,
+  createDailyPuzzleId,
   createInitialSession,
   createShareText,
   leaderboardScore,
+  leaderboardRankColor,
+  selectLeaderboardDisplayRows,
   setClueModeInSession,
   toggleMarkerInSession,
 } from '../src/shared/game';
-import { coordKey, parsePatternInput } from '../src/shared/pattern';
+import { coordKey, parsePatternInput, todayUtcDate } from '../src/shared/pattern';
+
+describe('Daily puzzle numbering', () => {
+  it('numbers launch day and following UTC days sequentially', () => {
+    expect(createDailyPuzzleId('2026-07-07').puzzleNumber).toBe(1);
+    expect(createDailyPuzzleId('2026-07-08').puzzleNumber).toBe(2);
+    expect(createDailyPuzzleId('2026-07-31').puzzleNumber).toBe(25);
+  });
+
+  it('uses UTC date boundaries', () => {
+    expect(todayUtcDate(new Date('2026-07-07T23:59:59.999Z'))).toBe('2026-07-07');
+    expect(todayUtcDate(new Date('2026-07-08T00:00:00.000Z'))).toBe('2026-07-08');
+    expect(createDailyPuzzleId(todayUtcDate(new Date('2026-07-08T00:00:00.000Z'))).puzzleNumber).toBe(2);
+  });
+});
 
 describe('player sessions', () => {
   const pattern = parsePatternInput('A1,B2,C3,D4');
@@ -81,5 +98,42 @@ describe('results', () => {
 
     expect(createShareText(session)).toContain('1 found in 1 guesses');
     expect(createShareText(session)).not.toContain('A1');
+  });
+
+  it('selects the leaders and adds a lower player after an ellipsis', () => {
+    const leaders = [
+      { rank: 1, displayName: 'one', guesses: 4, solvedAt: 1 },
+      { rank: 2, displayName: 'two', guesses: 5, solvedAt: 2 },
+      { rank: 3, displayName: 'three', guesses: 6, solvedAt: 3 },
+    ];
+    expect(selectLeaderboardDisplayRows(leaders, leaders[1] ?? null)).toHaveLength(3);
+
+    const player = { rank: 12, displayName: 'me', guesses: 9, solvedAt: 12 };
+    expect(selectLeaderboardDisplayRows(leaders, player).slice(-2)).toEqual([
+      { kind: 'ellipsis' },
+      { kind: 'entry', entry: player, isPlayer: true },
+    ]);
+  });
+
+  it('handles empty and short leaderboard displays without duplication', () => {
+    expect(selectLeaderboardDisplayRows([], null)).toEqual([]);
+    const entries = [
+      { rank: 1, displayName: 'one', guesses: 4, solvedAt: 1 },
+      { rank: 2, displayName: 'two', guesses: 5, solvedAt: 2 },
+    ];
+    expect(selectLeaderboardDisplayRows(entries, entries[0] ?? null)).toEqual([
+      { kind: 'entry', entry: entries[0], isPlayer: true },
+      { kind: 'entry', entry: entries[1], isPlayer: false },
+    ]);
+  });
+
+  it('cycles canonical leaderboard rank colors', () => {
+    expect([1, 2, 3, 4, 5].map(leaderboardRankColor)).toEqual([
+      'green',
+      'red',
+      'blue',
+      'orange',
+      'green',
+    ]);
   });
 });
