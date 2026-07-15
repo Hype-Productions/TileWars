@@ -106,7 +106,7 @@ export type DailyLeaderboardResponse = {
 };
 
 export const DAILY_SEED = 'pattern';
-export const DAILY_LAUNCH_DATE = '2026-07-07';
+export const DAILY_LAUNCH_DATE = '2026-07-15';
 
 export const createDailyPuzzleId = (
   date: string = todayUtcDate()

@@ -29,8 +29,8 @@
   "menu": {
     "items": [
       {
-        "label": "Create daily pattern",
-        "description": "Create a Pattern Tiles post",
+        "label": "Create TILEWARS post",
+        "description": "Create a playable TILEWARS post",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"

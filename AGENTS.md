@@ -28,7 +28,7 @@ You are writing a Devvit Web application that runs inside Reddit posts.
   - `core/dailyStorage.ts`: Redis key naming and persistence helpers.
   - `core/versusStorage.ts`: Versus searches, invitations, matches, attempts, rematches, and settlement.
   - `core/progressStorage.ts`: Idempotent XP awards, Daily streaks, overall records, rewards, and rivalry persistence.
-  - `core/post.ts`: Reddit custom post creation helper.
+  - `core/post.ts`: Reddit custom post creation and idempotent stickied Daily-results-thread helper.
 - `/src/shared`: Code shared by client, server, and tests.
   - `pattern.ts`: Pure pattern generation, validation, and clue logic.
   - `game.ts`: Shared game/session/result types and session reducers.
@@ -42,6 +42,8 @@ You are writing a Devvit Web application that runs inside Reddit posts.
 
 - The merged landing screen exposes Daily Challenge and 1v1 Battle using the final TILEWARS tile-board presentation. Legacy custom-mode types may remain in shared rules, but custom modes are not exposed by the current landing UI.
 - Daily sessions, guesses, X marks, clue mode, results, leaderboard eligibility, XP, and streaks are server-backed. Daily dev reset clears the playable session but must never grant duplicate XP.
+- A TILEWARS custom post is persistent: its Daily puzzle rolls over by UTC date inside the post. The app does not currently schedule a new Reddit post every day; installation creates a post and moderators may create additional posts through the menu action.
+- Every app-created TILEWARS post owns exactly one app-authored stickied Daily results comment. Store its ID by post ID, create it idempotently for new or legacy posts, and submit generic player score comments as user-authored replies to that comment. Never bind this flow to a subreddit name.
 - Custom-seed and custom-pattern games are local, unlimited, and excluded from leaderboards and progression.
 - Versus is asynchronous. Every player submits a hidden connected pattern of exactly `VERSUS_PATTERN_SIZE` tiles; the opponent solves that pattern using the normal board and server-side clue calculation.
 - Public `Find Match` creates at most one match per submitted pattern. Keep this rule configurable through `VERSUS_MAX_OPPONENTS`; do not expose queue, round, cap, Redis, or polling terminology to players.
@@ -98,6 +100,7 @@ You are writing a Devvit Web application that runs inside Reddit posts.
 ## Backend Rules
 
 - Access `redis`, `reddit`, and `context` only from server-side code through `@devvit/web/server`.
+- Resolve post and results-thread targets from `context.postId` and stored Reddit IDs. Do not hardcode subreddit names, post IDs, comment IDs, or installation-specific setup into gameplay routes.
 - Daily clue calculation for leaderboard-eligible play should stay server-side.
 - Keep Redis access behind storage helpers in `/src/server/core` where practical.
 - Do not introduce external paid services, external hosting dependencies, AI/LLM calls, or payment flows.
@@ -117,6 +120,7 @@ You are writing a Devvit Web application that runs inside Reddit posts.
 - The merged TILEWARS art direction is canonical and the active work is final UI/UX polish. Do not replace it with template or placeholder visuals.
 - Before final-polish implementation, type-check, lint, all 26 focused Vitest tests, and the production build passed on the merged architecture.
 - After the canonical share-link repair, type-check, lint, all 45 focused Vitest tests, and the production build pass. Static browser checks cover the splash invite prompt and Accept handoff at 390×844, 320×568, and 844×390 in addition to the earlier splash, loading, Help, stable-heading, and lobby checks; real Reddit validation remains required for iOS-created canonical links, server-backed history, and two-account flows.
+- Daily score sharing uses `runAs: 'USER'` and replies to one app-created stickied results comment per custom post. Existing posts lazily create and retain the same results-thread target; new posts prepare it during post creation. Playtest comments from non-owner accounts are expected to use the app account until Reddit approves the app version.
 - The built Phaser pages require the Devvit host bridge and cannot be visually exercised by a standalone static server. Complete their responsive, identity, persistence, share-sheet, matchmaking, and settlement checks in the real Devvit playtest.
 - Final validation must cover 1000×700, 390×844, 320×568, and 844×390 layouts plus two-account Reddit playtests for matching, invitations, search input, settlement, rivalry history, and progression acknowledgement.
 

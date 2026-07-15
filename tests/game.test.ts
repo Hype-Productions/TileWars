@@ -16,15 +16,15 @@ import { coordKey, parsePatternInput, todayUtcDate } from '../src/shared/pattern
 
 describe('Daily puzzle numbering', () => {
   it('numbers launch day and following UTC days sequentially', () => {
-    expect(createDailyPuzzleId('2026-07-07').puzzleNumber).toBe(1);
-    expect(createDailyPuzzleId('2026-07-08').puzzleNumber).toBe(2);
-    expect(createDailyPuzzleId('2026-07-31').puzzleNumber).toBe(25);
+    expect(createDailyPuzzleId('2026-07-15').puzzleNumber).toBe(1);
+    expect(createDailyPuzzleId('2026-07-16').puzzleNumber).toBe(2);
+    expect(createDailyPuzzleId('2026-07-31').puzzleNumber).toBe(17);
   });
 
   it('uses UTC date boundaries', () => {
-    expect(todayUtcDate(new Date('2026-07-07T23:59:59.999Z'))).toBe('2026-07-07');
-    expect(todayUtcDate(new Date('2026-07-08T00:00:00.000Z'))).toBe('2026-07-08');
-    expect(createDailyPuzzleId(todayUtcDate(new Date('2026-07-08T00:00:00.000Z'))).puzzleNumber).toBe(2);
+    expect(todayUtcDate(new Date('2026-07-15T23:59:59.999Z'))).toBe('2026-07-15');
+    expect(todayUtcDate(new Date('2026-07-16T00:00:00.000Z'))).toBe('2026-07-16');
+    expect(createDailyPuzzleId(todayUtcDate(new Date('2026-07-16T00:00:00.000Z'))).puzzleNumber).toBe(2);
   });
 
 });
@@ -109,7 +109,7 @@ describe('results', () => {
 
   it('creates the daily result comment from the shared result time', () => {
     const session = {
-      ...createInitialSession(createDailyPuzzleId('2026-07-08'), 4, 1000),
+      ...createInitialSession(createDailyPuzzleId('2026-07-16'), 4, 1000),
       solved: true,
       solvedAt: 124000,
     };

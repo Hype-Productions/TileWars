@@ -728,7 +728,8 @@ export class PatternGame extends Scene {
         x + 24,
         y + 213,
         shortLandscape ? modalWidth * 0.46 - 48 : modalWidth - 48,
-        summaryCenter
+        summaryCenter,
+        earnedXp
       );
     }
 
@@ -955,7 +956,8 @@ export class PatternGame extends Scene {
     x: number,
     y: number,
     width: number,
-    centerX: number
+    centerX: number,
+    earnedXp: number
   ): void {
     if (!this.progress) {
       return;
@@ -972,12 +974,8 @@ export class PatternGame extends Scene {
     const levelLabel = this.children.getByName('result-level-label');
     const xpLabel = this.children.getByName('result-xp-label');
     const streakXpLabel = this.children.getByName('result-streak-xp-label');
-    const rewardAmount =
-      reward && this.progress
-        ? Math.max(0, this.progress.totalXp - reward.previousTotalXp)
-        : (reward?.amount ?? 0);
-    const baseDailyXp = Math.min(DAILY_BASE_XP, rewardAmount);
-    const streakBonusXp = Math.max(0, rewardAmount - baseDailyXp);
+    const baseDailyXp = Math.min(DAILY_BASE_XP, earnedXp);
+    const streakBonusXp = Math.max(0, earnedXp - baseDailyXp);
 
     if (streakXpLabel instanceof GameObjects.Text) {
       streakXpLabel.setText(`+ ${streakBonusXp} XP`);
@@ -993,7 +991,7 @@ export class PatternGame extends Scene {
 
     const segments = buildXpAnimationSegments(
       reward.previousTotalXp,
-      reward.previousTotalXp + rewardAmount
+      reward.previousTotalXp + earnedXp
     );
     const animateSegment = (index: number): void => {
       const segment = segments[index];

@@ -30,6 +30,7 @@ import {
   awardDailyProgress,
   loadProgressSummary,
 } from '../core/progressStorage';
+import { ensureDailyResultsThread } from '../core/post';
 import { versusApi } from './versus';
 import { progressApi } from './progress';
 
@@ -218,8 +219,9 @@ api.post('/daily/comment-result', async (c) => {
   }
 
   try {
+    const resultsThreadId = await ensureDailyResultsThread(postId);
     const comment = await reddit.submitComment({
-      id: postId,
+      id: resultsThreadId,
       text: createShareText(session, dailyStreak),
       runAs: 'USER',
     });
