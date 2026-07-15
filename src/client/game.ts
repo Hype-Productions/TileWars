@@ -4,6 +4,7 @@ import { PatternGame } from './scenes/PatternGame';
 import { VersusGame } from './scenes/VersusGame';
 import { VersusLobby } from './scenes/VersusLobby';
 import { VersusResult } from './scenes/VersusResult';
+import { installHighDensityRendering } from './phaserDisplay';
 import {
   consumeVersusInviteIntent,
   readVersusShareData,
@@ -46,6 +47,9 @@ const StartGame = (parent: string) => {
           game.registry.set('acceptSharedInvite', true);
         }
         game.registry.set('startMode', startMode);
+      },
+      postBoot: (game) => {
+        installHighDensityRendering(game);
       },
     },
   });

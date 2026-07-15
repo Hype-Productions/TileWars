@@ -8,6 +8,12 @@ import {
   Types,
 } from 'phaser';
 import { exitExpandedMode, showShareSheet } from '@devvit/web/client';
+import {
+  getLogicalCameraScrollY,
+  getLogicalPointerY,
+  setLogicalCameraBounds,
+  setLogicalCameraScrollY,
+} from '../phaserDisplay';
 import type { Coord } from '../../shared/pattern';
 import { coordKey } from '../../shared/pattern';
 import type {
@@ -233,7 +239,7 @@ export class VersusLobby extends Scene {
     _deltaX: number,
     deltaY: number
   ): void {
-    if (this.codeEntryVisible) {
+    if (this.codeEntryVisible || (this.opponentSearchVisible && !this.selectedOpponent)) {
       return;
     }
     if (this.selectedOpponent) {
@@ -242,39 +248,42 @@ export class VersusLobby extends Scene {
       }
       return;
     }
-    this.setScroll(this.cameras.main.scrollY + deltaY * 0.7);
+    this.setScroll(getLogicalCameraScrollY(this) + deltaY * 0.7);
   }
 
   private handlePointerDown(pointer: Input.Pointer): void {
-    if (this.codeEntryVisible) {
+    if (this.codeEntryVisible || (this.opponentSearchVisible && !this.selectedOpponent)) {
       this.dragPointerY = null;
       return;
     }
     if (this.selectedOpponent) {
-      this.dragPointerY = this.pointerIsInsideHistoryList(pointer) ? pointer.y : null;
+      this.dragPointerY = this.pointerIsInsideHistoryList(pointer)
+        ? getLogicalPointerY(this, pointer.y)
+        : null;
       this.historyPointerDragged = false;
       return;
     }
-    this.dragPointerY = pointer.y;
+    this.dragPointerY = getLogicalPointerY(this, pointer.y);
   }
 
   private handlePointerMove(pointer: Input.Pointer): void {
-    if (this.codeEntryVisible) {
+    if (this.codeEntryVisible || (this.opponentSearchVisible && !this.selectedOpponent)) {
       this.dragPointerY = null;
       return;
     }
     if (!pointer.isDown || this.dragPointerY === null) {
       return;
     }
-    const delta = this.dragPointerY - pointer.y;
+    const logicalPointerY = getLogicalPointerY(this, pointer.y);
+    const delta = this.dragPointerY - logicalPointerY;
     if (Math.abs(delta) > 2) {
       if (this.selectedOpponent) {
         this.historyPointerDragged = true;
         this.setHistoryScroll(this.historyScrollOffset + delta);
       } else {
-        this.setScroll(this.cameras.main.scrollY + delta);
+        this.setScroll(getLogicalCameraScrollY(this) + delta);
       }
-      this.dragPointerY = pointer.y;
+      this.dragPointerY = logicalPointerY;
     }
   }
 
@@ -284,11 +293,12 @@ export class VersusLobby extends Scene {
 
   private setScroll(value: number): void {
     const max = Math.max(0, this.contentHeight - this.scale.height);
-    this.cameras.main.scrollY = PhaserMath.Clamp(value, 0, max);
+    setLogicalCameraScrollY(this, PhaserMath.Clamp(value, 0, max));
   }
 
   private pointerIsInsideHistoryList(pointer: Input.Pointer): boolean {
-    return pointer.y >= this.historyListTop && pointer.y <= this.historyListBottom;
+    const logicalPointerY = getLogicalPointerY(this, pointer.y);
+    return logicalPointerY >= this.historyListTop && logicalPointerY <= this.historyListBottom;
   }
 
   private setHistoryScroll(value: number): void {
@@ -457,8 +467,8 @@ export class VersusLobby extends Scene {
       })
       .setOrigin(0.5, 0);
     this.contentHeight = Math.max(this.scale.height, y + 118);
-    this.cameras.main.setBounds(0, 0, width, this.contentHeight);
-    this.setScroll(this.cameras.main.scrollY);
+    setLogicalCameraBounds(this, 0, 0, width, this.contentHeight);
+    this.setScroll(getLogicalCameraScrollY(this));
   }
 
   private drawPendingSection(
@@ -879,7 +889,7 @@ export class VersusLobby extends Scene {
       })
       .setOrigin(0.5);
     this.contentHeight = this.scale.height;
-    this.cameras.main.scrollY = 0;
+    setLogicalCameraScrollY(this, 0);
   }
 
   private drawInvitePrompt(invite: VersusInviteSummary): void {
@@ -989,7 +999,7 @@ export class VersusLobby extends Scene {
     }
     const width = this.scale.width;
     const height = this.scale.height;
-    this.cameras.main.scrollY = 0;
+    setLogicalCameraScrollY(this, 0);
     drawRaisedPanel(this, 14, 68, width - 28, 112, COLORS.results);
     this.add
       .text(width / 2, 88, opponent.opponentDisplayName, {
@@ -1076,13 +1086,13 @@ export class VersusLobby extends Scene {
       this.opponentHistory = [];
       this.historyScrollOffset = 0;
       this.historyScrollMax = 0;
-      this.cameras.main.scrollY = 0;
+      setLogicalCameraScrollY(this, 0);
       this.status = '';
       this.render();
     }, 'orange', 118);
     this.contentHeight = height;
-    this.cameras.main.setBounds(0, 0, width, height);
-    this.cameras.main.scrollY = 0;
+    setLogicalCameraBounds(this, 0, 0, width, height);
+    setLogicalCameraScrollY(this, 0);
   }
 
   private drawHistoryRow(
@@ -1286,11 +1296,12 @@ export class VersusLobby extends Scene {
   private drawModal(height: number): { x: number; y: number; width: number } {
     const width = Math.min(this.scale.width - 28, 430);
     const x = (this.scale.width - width) / 2;
-    const y = this.cameras.main.scrollY + (this.scale.height - height) / 2;
-    this.add.zone(0, this.cameras.main.scrollY, this.scale.width, this.scale.height).setOrigin(0).setInteractive();
+    const scrollY = getLogicalCameraScrollY(this);
+    const y = scrollY + (this.scale.height - height) / 2;
+    this.add.zone(0, scrollY, this.scale.width, this.scale.height).setOrigin(0).setInteractive();
     const overlay = this.add.graphics();
     overlay.fillStyle(0x111820, 0.5);
-    overlay.fillRect(0, this.cameras.main.scrollY, this.scale.width, this.scale.height);
+    overlay.fillRect(0, scrollY, this.scale.width, this.scale.height);
     drawRaisedPanel(this, x, y, width, height, COLORS.line, COLORS.panel);
     return { x, y, width };
   }
@@ -1355,7 +1366,7 @@ export class VersusLobby extends Scene {
     );
     this.codeInput.classList.toggle('is-history', historyMode);
     this.codeInput.style.left = `${bounds.left + x * scaleX}px`;
-    this.codeInput.style.top = `${bounds.top + (y - this.cameras.main.scrollY) * scaleY}px`;
+    this.codeInput.style.top = `${bounds.top + (y - getLogicalCameraScrollY(this)) * scaleY}px`;
     this.codeInput.style.width = `${width * scaleX}px`;
     this.codeInput.style.height = `${height * scaleY}px`;
     this.codeInput.style.fontSize = `${Math.max(16, 21 * Math.min(scaleX, scaleY))}px`;
@@ -1601,7 +1612,7 @@ export class VersusLobby extends Scene {
       this.opponentHistory = response.history;
       this.historyScrollOffset = Math.max(0, scrollOffset);
       this.opponentSearchVisible = false;
-      this.cameras.main.scrollY = 0;
+      setLogicalCameraScrollY(this, 0);
       this.status = '';
     } catch (error) {
       this.status = clientErrorMessage(error);
@@ -1807,7 +1818,7 @@ export class VersusLobby extends Scene {
     this.pickerMode = mode;
     this.selectedKeys.clear();
     this.status = `Pick ${VERSUS_PATTERN_SIZE} connected tiles.`;
-    this.cameras.main.scrollY = 0;
+    setLogicalCameraScrollY(this, 0);
     this.render();
   }
 

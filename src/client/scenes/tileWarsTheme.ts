@@ -127,7 +127,11 @@ export const drawTileWarsBackdrop = (
   height: number
 ): GameObjects.Graphics =>
   paintTileWarsBackdrop(
-    scene.add.graphics().setDepth(-20).setScrollFactor(0),
+    scene.add
+      .graphics()
+      .setName('tile-wars-backdrop')
+      .setDepth(-20)
+      .setScrollFactor(0),
     width,
     height
   );
@@ -297,7 +301,8 @@ export const drawTileButton = (
   const graphics = scene.add.graphics();
   const label = scene.add
     .text(0, 0, options.label, {
-      fontFamily: 'Arial Black, Arial, sans-serif',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
       fontSize: `${options.fontSize ?? 13}px`,
       color: '#ffffff',
       align: 'center',

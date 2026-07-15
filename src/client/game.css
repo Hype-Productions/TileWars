@@ -39,6 +39,12 @@ body {
   height: 100%;
 }
 
+#game-container canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
 .versus-overlay-input {
   position: fixed;
   z-index: 20;
