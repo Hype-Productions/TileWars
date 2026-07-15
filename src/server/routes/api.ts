@@ -30,6 +30,7 @@ import {
   awardDailyProgress,
   loadProgressSummary,
 } from '../core/progressStorage';
+import { syncCurrentUserProgressFlair } from '../core/progressFlair';
 import { ensureDailyResultsThread } from '../core/post';
 import { versusApi } from './versus';
 import { progressApi } from './progress';
@@ -103,6 +104,7 @@ api.post('/daily/guess', async (c) => {
       user.userId,
       nextSession.puzzleId.date
     );
+    await syncCurrentUserProgressFlair(progressAward.progress);
 
     return c.json<DailySessionResponse>({
       type: 'daily-session',

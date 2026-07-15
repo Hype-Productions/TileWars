@@ -36,11 +36,14 @@ import {
   loadRivalryHistory,
   loadRivalryOpponents,
 } from '../core/progressStorage';
+import { syncCurrentUserProgressFlair } from '../core/progressFlair';
 
 export const versusApi = new Hono();
 
 versusApi.get('/lobby', async (c) => {
-  return c.json(await loadVersusLobby(currentUser()));
+  const response = await loadVersusLobby(currentUser());
+  await syncCurrentUserProgressFlair(response.progress);
+  return c.json(response);
 });
 
 versusApi.get('/opponents', async (c) => {

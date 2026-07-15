@@ -25,6 +25,13 @@ export type PlayerProgressSummary = PlayerProgress & {
   xpForNextLevel: number;
 };
 
+export type ProgressFlair = {
+  title: string;
+  text: string;
+  backgroundColor: `#${string}`;
+  textColor: 'dark';
+};
+
 export type ProgressReward = {
   rewardId: string;
   source: 'daily' | 'versus';
@@ -121,6 +128,31 @@ export const summarizeProgress = (
     level,
     levelXp,
     xpForNextLevel: xpRequiredForLevel(level),
+  };
+};
+
+export const progressFlairFor = (
+  progress: Pick<PlayerProgressSummary, 'level' | 'totalXp'>
+): ProgressFlair => {
+  if (progress.totalXp <= 0) {
+    return {
+      title: 'Unranked',
+      text: 'Unranked',
+      backgroundColor: '#FFF6DD',
+      textColor: 'dark',
+    };
+  }
+
+  const level = Math.max(1, Math.floor(progress.level));
+  const tier =
+    PROGRESS_FLAIR_TIERS.find((candidate) => level >= candidate.minimumLevel) ??
+    TILE_STARTER_FLAIR_TIER;
+
+  return {
+    title: tier.title,
+    text: `${tier.title} · Lv ${level}`,
+    backgroundColor: tier.backgroundColor,
+    textColor: 'dark',
   };
 };
 
@@ -229,3 +261,32 @@ const daysBetween = (first: string, second: string): number => {
   const secondTime = Date.parse(`${second}T00:00:00.000Z`);
   return Math.round((secondTime - firstTime) / 86_400_000);
 };
+
+type ProgressFlairTier = {
+  minimumLevel: number;
+  title: string;
+  backgroundColor: `#${string}`;
+};
+
+const TILE_STARTER_FLAIR_TIER: ProgressFlairTier = {
+  minimumLevel: 1,
+  title: 'Tile Starter',
+  backgroundColor: '#FFF6DD',
+};
+
+const PROGRESS_FLAIR_TIERS: ProgressFlairTier[] = [
+  { minimumLevel: 500, title: 'Legend of the Grid', backgroundColor: '#FFB12D' },
+  { minimumLevel: 450, title: 'Living Pattern', backgroundColor: '#35D07F' },
+  { minimumLevel: 400, title: 'Tile Champion', backgroundColor: '#35D07F' },
+  { minimumLevel: 350, title: 'Grid Vanguard', backgroundColor: '#339DFF' },
+  { minimumLevel: 300, title: 'Pattern Sage', backgroundColor: '#339DFF' },
+  { minimumLevel: 250, title: 'Mosaic Master', backgroundColor: '#FF5365' },
+  { minimumLevel: 200, title: 'Board Tactician', backgroundColor: '#FF5365' },
+  { minimumLevel: 150, title: 'Tile Architect', backgroundColor: '#FFB12D' },
+  { minimumLevel: 100, title: 'Pattern Smith', backgroundColor: '#FFB12D' },
+  { minimumLevel: 75, title: 'Clue Keeper', backgroundColor: '#35D07F' },
+  { minimumLevel: 50, title: 'Grid Runner', backgroundColor: '#35D07F' },
+  { minimumLevel: 25, title: 'Color Reader', backgroundColor: '#339DFF' },
+  { minimumLevel: 10, title: 'Pattern Scout', backgroundColor: '#339DFF' },
+  TILE_STARTER_FLAIR_TIER,
+];

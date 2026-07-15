@@ -5,6 +5,7 @@ import {
   createInitialProgress,
   dailyXpForStreak,
   nextDailyStreak,
+  progressFlairFor,
   rivalryOutcomeColor,
   rivalryOutcomeSlots,
   summarizeProgress,
@@ -45,6 +46,37 @@ describe('progression', () => {
         '2026-07-12'
       )
     ).toBe(0);
+  });
+
+  it('maps every level boundary to its TILEWARS community flair', () => {
+    const flairAt = (level: number) => progressFlairFor({ level, totalXp: 1 });
+
+    expect(progressFlairFor({ level: 1, totalXp: 0 })).toMatchObject({
+      title: 'Unranked',
+      text: 'Unranked',
+      backgroundColor: '#FFF6DD',
+    });
+    expect(flairAt(1)).toMatchObject({ title: 'Tile Starter', backgroundColor: '#FFF6DD' });
+    expect(flairAt(9).text).toBe('Tile Starter · Lv 9');
+    expect(flairAt(10).title).toBe('Pattern Scout');
+    expect(flairAt(24).title).toBe('Pattern Scout');
+    expect(flairAt(25).title).toBe('Color Reader');
+    expect(flairAt(50).title).toBe('Grid Runner');
+    expect(flairAt(75).title).toBe('Clue Keeper');
+    expect(flairAt(100).title).toBe('Pattern Smith');
+    expect(flairAt(150).title).toBe('Tile Architect');
+    expect(flairAt(200).title).toBe('Board Tactician');
+    expect(flairAt(250).title).toBe('Mosaic Master');
+    expect(flairAt(300).title).toBe('Pattern Sage');
+    expect(flairAt(350).title).toBe('Grid Vanguard');
+    expect(flairAt(400).title).toBe('Tile Champion');
+    expect(flairAt(450).title).toBe('Living Pattern');
+    expect(flairAt(500)).toMatchObject({
+      title: 'Legend of the Grid',
+      text: 'Legend of the Grid · Lv 500',
+      backgroundColor: '#FFB12D',
+    });
+    expect(flairAt(501).text).toBe('Legend of the Grid · Lv 501');
   });
 
   it('rewards completion without rewarding forfeits', () => {

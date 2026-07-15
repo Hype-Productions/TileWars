@@ -22,7 +22,7 @@
   },
   "permissions": {
     "reddit": {
-      "scope": "user",
+      "scope": "moderator",
       "asUser": ["SUBMIT_COMMENT"]
     }
   },

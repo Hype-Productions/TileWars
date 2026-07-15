@@ -6,11 +6,14 @@ import {
   acknowledgeProgressRewards,
   loadProgressResponse,
 } from '../core/progressStorage';
+import { syncCurrentUserProgressFlair } from '../core/progressFlair';
 
 export const progressApi = new Hono();
 
 progressApi.get('/', async (c) => {
-  return c.json(await loadProgressResponse(currentUserId(), todayUtcDate()));
+  const response = await loadProgressResponse(currentUserId(), todayUtcDate());
+  await syncCurrentUserProgressFlair(response.progress);
+  return c.json(response);
 });
 
 progressApi.post('/rewards/ack', async (c) => {
