@@ -6,6 +6,6 @@ Players reveal information by selecting tiles. Green identifies a pattern tile, 
 
 TILEWARS also includes asynchronous 1v1 play. Players can find a public match, invite someone with a Reddit link or short code, accept a rematch, submit a connected pattern, and then solve their opponent's pattern when convenient. Results compare guesses and solve time, with replay boards, win/loss/draw records, opponent history, and rematch invitations.
 
-The Reddit connection is part of the game loop. Daily leaderboards create a shared community challenge, players can comment their result on the subreddit game post, and shared XP, levels, streaks, and rivalry history give regular players something to build over time. The progression system can also support future subreddit titles, colored flairs, and other milestone rewards.
+The Reddit connection is part of the game loop. Daily leaderboards create a shared community challenge, players can comment their result on the subreddit game post, and shared XP, levels, streaks, and rivalry history give regular players something to build over time. Milestone progression also feeds subreddit titles, colored flairs, and other visible rewards for regular players.
 
-The goal is a game that is quick to start, rewards careful reasoning, works on mobile and desktop, and gives a subreddit a simple daily activity with optional asynchronous competition.
+Before diving in the actual gameplay, try tapping the TILEWARS title and poke a few of the colorful background tiles!
