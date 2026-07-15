@@ -14,8 +14,10 @@ import type { VersusInviteSummary } from '../shared/versus';
 import { getVersusInvite } from './versusClient';
 import {
   clearVersusInviteIntent,
+  markVersusInviteHandled,
   readVersusShareData,
   rememberVersusInviteIntent,
+  wasVersusInviteHandled,
 } from './versusShare';
 
 const dailyButton = document.getElementById('daily-button');
@@ -30,7 +32,6 @@ const dailyNumber = document.getElementById('daily-number');
 const dailyStreak = document.getElementById('daily-streak');
 const inviteDialog = document.getElementById('invite-dialog');
 const inviteMessage = document.getElementById('invite-message');
-const inviteGuidance = document.getElementById('invite-guidance');
 const inviteStatus = document.getElementById('invite-status');
 const inviteAccept = document.getElementById('invite-accept');
 const inviteDecline = document.getElementById('invite-decline');
@@ -94,6 +95,7 @@ if (inviteAccept instanceof HTMLButtonElement) {
     if (!splashInviteId || inviteAccept.disabled) {
       return;
     }
+    markVersusInviteHandled(splashInviteId);
     rememberVersusInviteIntent(splashInviteId);
     inviteAccept.textContent = 'Opening...';
     inviteAccept.disabled = true;
@@ -432,7 +434,11 @@ function closeLeaderboard(): void {
 
 function showSharedInvite(): void {
   const shared = readVersusShareData();
-  if (!shared || !(inviteDialog instanceof HTMLElement)) {
+  if (
+    !shared ||
+    wasVersusInviteHandled(shared.inviteId) ||
+    !(inviteDialog instanceof HTMLElement)
+  ) {
     return;
   }
   splashInviteId = shared.inviteId;
@@ -454,14 +460,14 @@ async function loadInvitePreview(inviteId: string): Promise<void> {
     renderInvitePreview(response.invite);
   } catch {
     if (splashInviteId === inviteId && inviteStatus instanceof HTMLElement) {
-      inviteStatus.textContent = 'We’ll verify this challenge when you open it.';
+      inviteStatus.textContent = 'We will verify this invitation when you open it.';
     }
   }
 }
 
 function renderInvitePreview(invite: VersusInviteSummary): void {
   if (inviteMessage instanceof HTMLElement) {
-    inviteMessage.textContent = `${invite.creatorDisplayName} challenged you to a battle.`;
+    inviteMessage.textContent = `${invite.creatorDisplayName} has invited you to a 1v1 match.`;
   }
   if (!(inviteAccept instanceof HTMLButtonElement)) {
     return;
@@ -474,17 +480,15 @@ function renderInvitePreview(invite: VersusInviteSummary): void {
   inviteAccept.textContent = invite.status === 'open' ? 'Accept' : 'Continue';
 
   if (invite.role === 'creator') {
-    setInviteUnavailable(
-      'This is your invitation. Send it to a rival and let the battle begin.'
-    );
+    setInviteUnavailable('This is your invitation. Send it to another player.');
   } else if (!canOpen) {
     setInviteUnavailable('This invitation is no longer available.');
   }
 }
 
 function setInviteUnavailable(message: string): void {
-  if (inviteGuidance instanceof HTMLElement) {
-    inviteGuidance.textContent = message;
+  if (inviteMessage instanceof HTMLElement) {
+    inviteMessage.textContent = message;
   }
   if (inviteStatus instanceof HTMLElement) {
     inviteStatus.textContent = '';
@@ -499,6 +503,9 @@ function closeInviteDialog(): void {
     return;
   }
   inviteDialog.hidden = true;
+  if (splashInviteId) {
+    markVersusInviteHandled(splashInviteId);
+  }
   splashInviteId = null;
   clearVersusInviteIntent();
   if (inviteDecline instanceof HTMLButtonElement) {

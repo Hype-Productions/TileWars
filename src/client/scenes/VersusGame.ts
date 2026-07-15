@@ -544,12 +544,12 @@ export class VersusGame extends Scene {
     }
     const score = this.match.myScore;
     const guesses = score?.guesses ?? this.session.guesses.length;
-    const timing = score ? ` (${formatDuration(score.durationMs)})` : '';
+    const timing = score ? ` in ${formatDuration(score.durationMs)}` : '';
     this.drawModal(
-      'Pattern Found!',
+      'Pattern Complete',
       [
         `You found ${this.match.opponentDisplayName}'s pattern in ${guesses} guesses${timing}.`,
-        `Your score is locked in; waiting for ${this.match.opponentDisplayName}.`,
+        'Check the Versus lobby later to see the result.',
       ],
       true
     );
@@ -559,7 +559,7 @@ export class VersusGame extends Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     const modalWidth = Math.min(width - 30, 420);
-    const modalHeight = 220;
+    const modalHeight = finished ? 260 : 220;
     const x = (width - modalWidth) / 2;
     const y = (height - modalHeight) / 2;
     this.add.zone(0, 0, width, height).setOrigin(0).setInteractive();
@@ -578,24 +578,57 @@ export class VersusGame extends Scene {
     this.add
       .text(width / 2, y + 34, title, {
         fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '22px',
+        fontSize: finished ? (width < 390 ? '24px' : '28px') : '22px',
         color: '#18212b',
       })
       .setOrigin(0.5);
-    this.add
-      .text(width / 2, y + 78, lines.join('\n'), {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '16px',
-        color: '#33404c',
-        align: 'center',
-        lineSpacing: 7,
-      })
-      .setOrigin(0.5, 0);
     if (finished) {
+      this.add
+        .text(width / 2, y + 78, lines[0] ?? '', {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: width < 390 ? '14px' : '16px',
+          color: '#25313b',
+          align: 'center',
+          lineSpacing: 4,
+          wordWrap: {
+            width: modalWidth - 48,
+            useAdvancedWrap: true,
+          },
+          maxLines: 3,
+        })
+        .setOrigin(0.5, 0);
+      this.add
+        .text(width / 2, y + 151, lines[1] ?? '', {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: width < 390 ? '13px' : '14px',
+          color: '#53606b',
+          align: 'center',
+          lineSpacing: 4,
+          wordWrap: {
+            width: modalWidth - 56,
+            useAdvancedWrap: true,
+          },
+          maxLines: 3,
+        })
+        .setOrigin(0.5, 0);
       this.createButton(width / 2, y + modalHeight - 34, 'Lobby', () => {
         this.scene.start('VersusLobby');
-      }, 'green');
+      }, 'orange');
     } else {
+      this.add
+        .text(width / 2, y + 78, lines.join('\n'), {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: width < 390 ? '14px' : '16px',
+          color: '#33404c',
+          align: 'center',
+          lineSpacing: 5,
+          wordWrap: {
+            width: modalWidth - 48,
+            useAdvancedWrap: true,
+          },
+          maxLines: 5,
+        })
+        .setOrigin(0.5, 0);
       this.createButton(width / 2, y + modalHeight - 34, 'Close', () => {
         this.modal = 'none';
         this.render();

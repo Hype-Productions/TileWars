@@ -13,12 +13,15 @@ import {
 
 export const VERSUS_PATTERN_SIZE = 6;
 export const VERSUS_MAX_OPPONENTS = 1;
-export const VERSUS_MATCH_DURATION_MS = 72 * 60 * 60 * 1000;
+export const VERSUS_MAX_UNFINISHED_MATCHES = 5;
+export const VERSUS_MATCH_DURATION_MS = 24 * 60 * 60 * 1000;
+export const VERSUS_INVITATION_DURATION_MS = 72 * 60 * 60 * 1000;
 export const VERSUS_MATCHMAKING_DURATION_MS = 72 * 60 * 60 * 1000;
 
 export type VersusRules = {
   patternSize: number;
   maxOpponents: number;
+  maxUnfinishedMatches: number;
   matchDurationMs: number;
 };
 
@@ -197,8 +200,16 @@ export type VersusModeRequest = {
 export const versusRules = (): VersusRules => ({
   patternSize: VERSUS_PATTERN_SIZE,
   maxOpponents: VERSUS_MAX_OPPONENTS,
+  maxUnfinishedMatches: VERSUS_MAX_UNFINISHED_MATCHES,
   matchDurationMs: VERSUS_MATCH_DURATION_MS,
 });
+
+export const unfinishedVersusMatchCount = (
+  matches: readonly Pick<VersusMatchSummary, 'status' | 'myAttemptStatus'>[]
+): number =>
+  matches.filter(
+    (match) => match.status === 'active' && match.myAttemptStatus !== 'solved'
+  ).length;
 
 export const validateVersusPattern = (pattern: Coord[]): ValidationResult => {
   return validatePattern(pattern, {

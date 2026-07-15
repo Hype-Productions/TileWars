@@ -1,4 +1,5 @@
 import {
+  Display,
   GameObjects,
   Input,
   Math as PhaserMath,
@@ -18,6 +19,7 @@ import type {
 } from '../../shared/versus';
 import {
   VERSUS_PATTERN_SIZE,
+  unfinishedVersusMatchCount,
   organizeVersusLobby,
   validateVersusPattern,
   versusRules,
@@ -26,8 +28,12 @@ import {
   buildXpAnimationSegments,
   createInitialProgress,
   summarizeProgress,
+  VERSUS_DRAW_XP,
+  VERSUS_LOSS_XP,
+  VERSUS_WIN_XP,
 } from '../../shared/progression';
 import type {
+  ProgressReward,
   RivalryHistoryEntry,
   RivalryOpponentSummary,
   RivalryOutcome,
@@ -51,6 +57,7 @@ import {
   updateRematchRequest,
   VersusClientError,
 } from '../versusClient';
+import { markVersusInviteHandled } from '../versusShare';
 import {
   TILE_WARS_COLORS,
   clearSceneContent,
@@ -110,6 +117,7 @@ export class VersusLobby extends Scene {
   private rewardAnimationComplete = false;
   private codeEntryVisible = false;
   private inviteCode = '';
+  private codeEntryError = '';
   private codeInput: HTMLInputElement | null = null;
   private opponentSearchVisible = false;
   private opponentQuery = '';
@@ -153,6 +161,7 @@ export class VersusLobby extends Scene {
     this.rewardAnimationComplete = false;
     this.codeEntryVisible = false;
     this.inviteCode = '';
+    this.codeEntryError = '';
     this.opponentSearchVisible = false;
     this.opponentQuery = '';
     this.allOpponents = [];
@@ -186,15 +195,15 @@ export class VersusLobby extends Scene {
   }
 
   private async initializeLobby(): Promise<void> {
-    await this.refreshLobby(false);
+    const inviteId = this.pendingInviteId;
+    const acceptInvite = this.acceptPendingInvite;
+    await this.refreshLobby(false, inviteId === null);
     if (this.pendingHistoryReturn) {
       const target = this.pendingHistoryReturn;
       this.pendingHistoryReturn = undefined;
       await this.openOpponentHistory(target.opponent, target.scrollOffset);
       return;
     }
-    const inviteId = this.pendingInviteId;
-    const acceptInvite = this.acceptPendingInvite;
     this.pendingInviteId = null;
     this.acceptPendingInvite = false;
     if (inviteId) {
@@ -224,6 +233,9 @@ export class VersusLobby extends Scene {
     _deltaX: number,
     deltaY: number
   ): void {
+    if (this.codeEntryVisible) {
+      return;
+    }
     if (this.selectedOpponent) {
       if (this.pointerIsInsideHistoryList(pointer)) {
         this.setHistoryScroll(this.historyScrollOffset + deltaY * 0.7);
@@ -234,6 +246,10 @@ export class VersusLobby extends Scene {
   }
 
   private handlePointerDown(pointer: Input.Pointer): void {
+    if (this.codeEntryVisible) {
+      this.dragPointerY = null;
+      return;
+    }
     if (this.selectedOpponent) {
       this.dragPointerY = this.pointerIsInsideHistoryList(pointer) ? pointer.y : null;
       this.historyPointerDragged = false;
@@ -243,6 +259,10 @@ export class VersusLobby extends Scene {
   }
 
   private handlePointerMove(pointer: Input.Pointer): void {
+    if (this.codeEntryVisible) {
+      this.dragPointerY = null;
+      return;
+    }
     if (!pointer.isDown || this.dragPointerY === null) {
       return;
     }
@@ -339,6 +359,7 @@ export class VersusLobby extends Scene {
       this.pickerInviteId = null;
       this.incomingInvite = null;
       this.codeEntryVisible = false;
+      this.codeEntryError = '';
       this.opponentSearchVisible = false;
       this.selectedOpponent = null;
       this.selectedKeys.clear();
@@ -382,6 +403,9 @@ export class VersusLobby extends Scene {
     drawPlainRivalryRecord(this, width / 2, 132, progress.versus, 15);
 
     const searching = this.lobby.round?.status === 'matching';
+    const unfinished = unfinishedVersusMatchCount(this.lobby.matches);
+    const searchLimitReached =
+      unfinished >= this.lobby.rules.maxUnfinishedMatches;
     const actionGap = 6;
     const actionWidth = (width - 28 - actionGap * 3) / 4;
     const actionStart = 14 + actionWidth / 2;
@@ -389,17 +413,34 @@ export class VersusLobby extends Scene {
       actionStart + index * (actionWidth + actionGap);
     this.createButton(actionX(0), 178, 'Back', (pointer) => this.goBack(pointer), 'orange', actionWidth);
     this.createButton(actionX(1), 178, searching ? 'Searching' : width < 430 ? 'Find' : 'Find Match', () => {
-      this.openPicker('public');
-    }, 'blue', actionWidth, searching);
+      this.openPublicPicker();
+    }, 'blue', actionWidth, searching || searchLimitReached);
     this.createButton(actionX(2), 178, 'Invite', () => this.openPicker('invite-create'), 'accept', actionWidth);
     this.createButton(actionX(3), 178, width < 430 ? 'Code' : 'Enter Code', () => {
       this.codeEntryVisible = true;
       this.inviteCode = '';
+      this.codeEntryError = '';
       this.render();
     }, 'decline', actionWidth);
 
     const sections = organizeVersusLobby(this.lobby);
-    let y = 220;
+    let y = searchLimitReached && !searching ? 248 : 220;
+    if (searchLimitReached && !searching) {
+      this.add
+        .text(
+          width / 2,
+          217,
+          `${unfinished} unfinished matches - finish one to search again.`,
+          {
+            fontFamily: 'Arial Black, Arial, sans-serif',
+            fontSize: width < 430 ? '11px' : '12px',
+            color: '#25313b',
+            align: 'center',
+            wordWrap: { width: width - 44, useAdvancedWrap: true },
+          }
+        )
+        .setOrigin(0.5, 0);
+    }
     if (searching) {
       y = this.drawLookingSection(y);
     }
@@ -556,29 +597,40 @@ export class VersusLobby extends Scene {
 
   private drawMatchCard(match: VersusMatchSummary, color: number, y: number): number {
     const width = this.scale.width;
-    const mobile = width < 500;
     const label =
       match.myAttemptStatus === 'playing'
         ? 'Continue'
         : match.myAttemptStatus === 'not-started'
           ? 'Play'
           : null;
-    const cardHeight = mobile && label ? 118 : 92;
+    const status =
+      match.myAttemptStatus === 'solved'
+        ? 'Finished - waiting for opponent'
+        : match.myAttemptStatus === 'playing'
+          ? 'Continue solving the pattern'
+          : "Solve your opponent's pattern";
+    const cardHeight = 82;
+    const actionY = y + 55;
+    const actionWidth = label === 'Continue' ? 92 : 76;
+    const actionX = width - 76;
+    const statusWidth = label ? actionX - actionWidth / 2 - 42 : width - 60;
     this.drawCardPanel(color, y, cardHeight);
     this.add
       .text(30, y + 20, `vs ${match.opponentDisplayName}`, this.cardTitleStyle())
       .setOrigin(0, 0.5);
     drawPlainRivalryRecord(this, width - 76, y + 20, match.rivalry, 12);
-    this.add
-      .text(30, y + 49, `${this.sourceLabel(match.source)} · ${this.matchStatus(match)}`, {
-        ...this.cardBodyStyle(),
-        wordWrap: { width: mobile && label ? width - 60 : Math.max(180, width - 190) },
-      })
+    const statusLabel = this.add
+      .text(30, actionY, status, this.cardBodyStyle())
       .setOrigin(0, 0.5);
+    if (statusLabel.width > statusWidth) {
+      statusLabel.setFontSize(
+        Math.max(10, Math.floor(13 * statusWidth / statusLabel.width))
+      );
+    }
     if (label) {
-      this.createButton(width - 72, mobile ? y + 91 : y + 67, label, () => {
+      this.createButton(actionX, actionY, label, () => {
         this.scene.start('VersusGame', { matchId: match.matchId });
-      });
+      }, 'accept', actionWidth);
     }
     return cardHeight;
   }
@@ -598,14 +650,14 @@ export class VersusLobby extends Scene {
     const cardHeight = openCreator || invite.role === 'acceptor' ? 118 : 92;
     this.drawCardPanel(color, y, cardHeight);
     const title = invite.role === 'creator'
-      ? 'Open invitation'
+      ? `Open Invitation - ${invite.inviteCode}`
       : `Invitation from ${invite.creatorDisplayName}`;
     const body =
       invite.role === 'acceptor'
         ? 'Invitation accepted — choose your pattern'
         : invite.status === 'accepted-awaiting-pattern'
-          ? `${invite.acceptedByDisplayName ?? 'A player'} accepted — waiting for their pattern`
-          : 'Invite link ready. Waiting for opponent to accept.';
+          ? `${invite.acceptedByDisplayName ?? 'A player'} accepted - waiting for their pattern`
+          : 'Waiting for an opponent to accept.';
     this.add.text(30, y + 20, title, this.cardTitleStyle()).setOrigin(0, 0.5);
     this.add
       .text(30, y + 49, body, {
@@ -642,7 +694,7 @@ export class VersusLobby extends Scene {
           onClick: () => void this.shareInvite(invite),
         });
         drawTileButton(this, {
-          x: actionX(1), y: y + 91, label: 'Copy Code', variant: 'dark',
+          x: actionX(1), y: y + 91, label: 'Copy Code', variant: 'green',
           width: actionWidth, height: 34, fontSize: 12,
           onClick: () => void this.copyInviteCode(invite.inviteCode),
         });
@@ -655,7 +707,7 @@ export class VersusLobby extends Scene {
         const actionWidth = Math.min(116, (width - 42) / 3);
         const start = width / 2 - actionWidth - 4;
         this.createButton(start, y + 91, 'Share Again', () => void this.shareInvite(invite), 'blue', actionWidth);
-        this.createButton(width / 2, y + 91, 'Copy Code', () => void this.copyInviteCode(invite.inviteCode), 'neutral', actionWidth);
+        this.createButton(width / 2, y + 91, 'Copy Code', () => void this.copyInviteCode(invite.inviteCode), 'accept', actionWidth);
         this.createButton(width / 2 + actionWidth + 4, y + 91, 'Cancel', () => void this.cancelInvite(invite.inviteId), 'decline', actionWidth);
       }
     }
@@ -689,26 +741,46 @@ export class VersusLobby extends Scene {
           : `${rematch.opponentDisplayName} invited you to play again.`;
     this.add.text(30, y + 48, body, this.cardBodyStyle()).setOrigin(0, 0.5);
     if (rematch.role === 'responder') {
-      const actionWidth = mobile ? (width - 44) / 2 : undefined;
+      const actionWidth = mobile ? (width - 60) / 2 : undefined;
       const actionGap = 8;
       const firstX = mobile && actionWidth
-        ? 18 + actionWidth / 2
+        ? 26 + actionWidth / 2
         : width / 2 - 70;
       const secondX = mobile && actionWidth
         ? firstX + actionWidth + actionGap
         : width / 2 + 70;
       if (rematch.status === 'pending') {
-        this.createButton(firstX, actionsY, 'Accept', () => void this.acceptRematch(rematch), 'accept', actionWidth);
+        this.drawRematchAction(firstX, actionsY, 'Accept', () => void this.acceptRematch(rematch), 'green', actionWidth);
       } else {
-        this.createButton(firstX, actionsY, 'Choose Pattern', () => {
+        this.drawRematchAction(firstX, actionsY, 'Choose Pattern', () => {
           this.openRematchAnswerPicker(rematch);
-        }, 'accept', actionWidth);
+        }, 'green', actionWidth);
       }
-      this.createButton(secondX, actionsY, 'Decline', () => void this.updateRematch(rematch, 'decline'), 'decline', actionWidth);
+      this.drawRematchAction(secondX, actionsY, 'Decline', () => void this.updateRematch(rematch, 'decline'), 'red', actionWidth);
     } else if (rematch.status === 'pending') {
-      this.createButton(mobile ? 76 : width - 72, actionsY, 'Cancel', () => void this.updateRematch(rematch, 'cancel'), 'decline', 92);
+      this.createButton(width - 72, actionsY, 'Cancel', () => void this.updateRematch(rematch, 'cancel'), 'decline', 92);
     }
     return cardHeight;
+  }
+
+  private drawRematchAction(
+    x: number,
+    y: number,
+    label: string,
+    onClick: () => void,
+    variant: 'green' | 'red',
+    width?: number
+  ): void {
+    drawTileButton(this, {
+      x,
+      y,
+      label,
+      onClick,
+      variant,
+      ...(width === undefined ? {} : { width }),
+      height: 32,
+      fontSize: 13,
+    });
   }
 
   private drawCardPanel(color: number, y: number, height: number): void {
@@ -811,25 +883,23 @@ export class VersusLobby extends Scene {
   }
 
   private drawInvitePrompt(invite: VersusInviteSummary): void {
-    const modal = this.drawModal(300);
+    const modal = this.drawModal(240);
     this.add
       .text(this.scale.width / 2, modal.y + 46, 'Versus Invitation', this.modalTitleStyle())
       .setOrigin(0.5);
     this.add
       .text(
         this.scale.width / 2,
-        modal.y + 112,
-        `${invite.creatorDisplayName} invited you to solve their hidden pattern.`,
+        modal.y + 108,
+        `${invite.creatorDisplayName} has invited you to a 1v1 match.`,
         this.modalBodyStyle(modal.width - 40)
       )
       .setOrigin(0.5);
-    this.add
-      .text(this.scale.width / 2, modal.y + 162, 'Accept to choose your own 6-tile pattern and start the challenge.', this.modalBodyStyle(modal.width - 40))
-      .setOrigin(0.5);
-    this.createButton(this.scale.width / 2 - 82, modal.y + 244, 'Accept', () => {
+    this.createButton(this.scale.width / 2 - 82, modal.y + 188, 'Accept', () => {
       void this.acceptInvite(invite.inviteId);
     }, 'accept');
-    this.createButton(this.scale.width / 2 + 82, modal.y + 244, 'Decline', () => {
+    this.createButton(this.scale.width / 2 + 82, modal.y + 188, 'Decline', () => {
+      markVersusInviteHandled(invite.inviteId);
       this.incomingInvite = null;
       this.status = 'Invitation dismissed.';
       this.render();
@@ -837,9 +907,9 @@ export class VersusLobby extends Scene {
   }
 
   private drawCodeEntry(): void {
-    const modal = this.drawModal(260);
+    const modal = this.drawModal(230);
     this.add
-      .text(this.scale.width / 2, modal.y + 42, 'Enter invite code', this.modalTitleStyle())
+      .text(this.scale.width / 2, modal.y + 42, 'Enter Invite Code', this.modalTitleStyle())
       .setOrigin(0.5);
     const graphics = this.add.graphics();
     graphics.fillStyle(COLORS.paper, 1);
@@ -847,13 +917,20 @@ export class VersusLobby extends Scene {
     graphics.lineStyle(2, COLORS.line, 1);
     graphics.strokeRoundedRect(modal.x + 28, modal.y + 82, modal.width - 56, 54, 8);
     this.add
-      .text(this.scale.width / 2, modal.y + 158, 'Use your keyboard, then press Enter.', this.modalBodyStyle(modal.width - 40))
+      .text(this.scale.width / 2, modal.y + 151, this.codeEntryError, {
+        fontFamily: 'Arial Black, Arial, sans-serif',
+        fontSize: '12px',
+        color: '#d93649',
+        align: 'center',
+      })
+      .setName('invite-code-error')
       .setOrigin(0.5);
-    this.createButton(this.scale.width / 2 - 82, modal.y + 214, 'Cancel', () => {
+    this.createButton(this.scale.width / 2 - 82, modal.y + 188, 'Back', () => {
       this.codeEntryVisible = false;
+      this.codeEntryError = '';
       this.render();
-    });
-    this.createButton(this.scale.width / 2 + 82, modal.y + 214, 'Open', () => void this.openInviteCode());
+    }, 'orange');
+    this.createButton(this.scale.width / 2 + 82, modal.y + 188, 'Play', () => void this.openInviteCode(), 'accept');
     this.showCodeInput(modal.x + 28, modal.y + 82, modal.width - 56, 54);
   }
 
@@ -912,6 +989,7 @@ export class VersusLobby extends Scene {
     }
     const width = this.scale.width;
     const height = this.scale.height;
+    this.cameras.main.scrollY = 0;
     drawRaisedPanel(this, 14, 68, width - 28, 112, COLORS.results);
     this.add
       .text(width / 2, 88, opponent.opponentDisplayName, {
@@ -941,30 +1019,30 @@ export class VersusLobby extends Scene {
       this.historyScrollMax
     );
 
+    const maskGraphics = this.make.graphics({}, false);
+    maskGraphics.fillStyle(0xffffff, 1);
+    maskGraphics.fillRect(0, listTop, width, viewportHeight);
+    const listMask = maskGraphics.createGeometryMask();
+    this.historyMaskGraphics = maskGraphics;
+
     const list = this.add.container(0, listTop - this.historyScrollOffset);
     this.historyListContainer = list;
     const rowWidth = width - (this.historyScrollMax > 0 ? 40 : 28);
     this.opponentHistory.forEach((entry, index) => {
-      this.drawHistoryRow(list, 14, index * 64, rowWidth, entry);
+      this.drawHistoryRow(list, 14, index * 64, rowWidth, entry, listMask);
     });
     if (this.opponentHistory.length === 0) {
-      list.add(
-        this.add
-          .text(
-            width / 2,
-            28,
-            'No match history is available yet.',
-            this.modalBodyStyle(width - 40)
-          )
-          .setOrigin(0.5)
-      );
+      const emptyLabel = this.add
+        .text(
+          width / 2,
+          28,
+          'No match history is available yet.',
+          this.modalBodyStyle(width - 40)
+        )
+        .setOrigin(0.5)
+        .setMask(listMask);
+      list.add(emptyLabel);
     }
-
-    const maskGraphics = this.make.graphics({}, false);
-    maskGraphics.fillStyle(0xffffff, 1);
-    maskGraphics.fillRect(0, listTop, width, viewportHeight);
-    list.setMask(maskGraphics.createGeometryMask());
-    this.historyMaskGraphics = maskGraphics;
 
     if (this.historyScrollMax > 0) {
       const trackX = width - 19;
@@ -1012,9 +1090,10 @@ export class VersusLobby extends Scene {
     x: number,
     y: number,
     width: number,
-    entry: RivalryHistoryEntry
+    entry: RivalryHistoryEntry,
+    mask: Display.Masks.GeometryMask
   ): void {
-    const graphics = this.add.graphics();
+    const graphics = this.add.graphics().setMask(mask);
     container.add(graphics);
     graphics.fillStyle(COLORS.paper, 0.92);
     graphics.fillRoundedRect(x, y, width, 56, 7);
@@ -1031,7 +1110,7 @@ export class VersusLobby extends Scene {
     container.add(
       this.add.text(x + 23, y + 28, entry.outcome.charAt(0).toUpperCase(), {
         fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#ffffff',
-      }).setOrigin(0.5)
+      }).setOrigin(0.5).setMask(mask)
     );
     const dateLabel = this.add
       .text(
@@ -1044,7 +1123,8 @@ export class VersusLobby extends Scene {
           color: '#18212b',
         }
       )
-      .setOrigin(1, 0.5);
+      .setOrigin(1, 0.5)
+      .setMask(mask);
     container.add(dateLabel);
     const scoreLabel = this.add
       .text(x + 48, y + 28, this.historyScoreText(entry), {
@@ -1052,7 +1132,8 @@ export class VersusLobby extends Scene {
         fontSize: this.scale.width < 430 ? '11px' : '13px',
         color: '#18212b',
       })
-      .setOrigin(0, 0.5);
+      .setOrigin(0, 0.5)
+      .setMask(mask);
     const scoreWidth = Math.max(100, width - 72 - dateLabel.width);
     if (scoreLabel.width > scoreWidth) {
       const fontSize = Number.parseInt(String(scoreLabel.style.fontSize), 10);
@@ -1082,7 +1163,7 @@ export class VersusLobby extends Scene {
     if (!this.lobby) {
       return;
     }
-    const modal = this.drawModal(260);
+    const modal = this.drawModal(292);
     const rewards = [...this.lobby.pendingRewards].sort(
       (first, second) => first.createdAt - second.createdAt
     );
@@ -1095,11 +1176,32 @@ export class VersusLobby extends Scene {
           totalXp: firstReward.previousTotalXp,
         })
       : this.lobby.progress;
+    const displayedProgress = this.rewardAnimationComplete
+      ? this.lobby.progress
+      : initial;
     this.add
       .text(this.scale.width / 2, modal.y + 38, 'XP Earned', this.modalTitleStyle())
       .setOrigin(0.5);
     this.add
-      .text(this.scale.width / 2, modal.y + 78, `Level ${initial.level}`, {
+      .text(
+        this.scale.width / 2,
+        modal.y + 72,
+        rewardReasonText(rewards),
+        {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: this.scale.width < 390 ? '13px' : '14px',
+          color: '#25313b',
+          align: 'center',
+          wordWrap: {
+            width: modal.width - 52,
+            useAdvancedWrap: true,
+          },
+          maxLines: 2,
+        }
+      )
+      .setOrigin(0.5, 0);
+    this.add
+      .text(this.scale.width / 2, modal.y + 120, `Level ${displayedProgress.level}`, {
         fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '20px', color: '#25313b',
       })
       .setName('reward-level')
@@ -1107,14 +1209,14 @@ export class VersusLobby extends Scene {
     this.add
       .text(
         this.scale.width / 2,
-        modal.y + 108,
-        `${initial.levelXp}/${initial.xpForNextLevel} XP · +${amount} XP`,
+        modal.y + 150,
+        `${displayedProgress.levelXp}/${displayedProgress.xpForNextLevel} XP · +${amount} XP`,
         { fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '13px', color: '#53606b' }
       )
       .setName('reward-xp')
       .setOrigin(0.5);
     const barX = modal.x + 28;
-    const barY = modal.y + 130;
+    const barY = modal.y + 172;
     const barWidth = modal.width - 56;
     const bar = this.add.graphics();
     bar.fillStyle(0xd8d0c5, 1);
@@ -1136,7 +1238,7 @@ export class VersusLobby extends Scene {
     }
     this.createButton(
       this.scale.width / 2,
-      modal.y + 215,
+      modal.y + 247,
       'Continue',
       () => void this.dismissRewards(),
       'accept',
@@ -1207,6 +1309,13 @@ export class VersusLobby extends Scene {
       .slice(0, 12)
       .toUpperCase();
     this.inviteCode = normalized;
+    if (this.codeEntryError) {
+      this.codeEntryError = '';
+      const errorLabel = this.children.getByName('invite-code-error');
+      if (errorLabel instanceof GameObjects.Text) {
+        errorLabel.setText('');
+      }
+    }
     if (this.codeInput.value !== normalized) {
       this.codeInput.value = normalized;
     }
@@ -1261,7 +1370,7 @@ export class VersusLobby extends Scene {
     this.codeInput?.blur();
   }
 
-  private async refreshLobby(matchmake: boolean): Promise<void> {
+  private async refreshLobby(matchmake: boolean, renderAfter = true): Promise<void> {
     if (
       this.loading ||
       this.rewardVisible ||
@@ -1303,7 +1412,7 @@ export class VersusLobby extends Scene {
       }
     } finally {
       this.loading = false;
-      if (this.scene.isActive()) {
+      if (renderAfter && this.scene.isActive()) {
         this.render();
       }
     }
@@ -1417,6 +1526,7 @@ export class VersusLobby extends Scene {
     this.loading = true;
     try {
       const response = await acceptVersusInvite(inviteId);
+      markVersusInviteHandled(inviteId);
       this.incomingInvite = null;
       this.pickerMode = 'invite-answer';
       this.pickerInviteId = response.invite.inviteId;
@@ -1434,17 +1544,29 @@ export class VersusLobby extends Scene {
     if (this.inviteCode.length === 0 || this.loading) {
       return;
     }
-    this.hideCodeInput();
     this.loading = true;
+    let renderAfter = true;
     try {
       const response = await getVersusInviteByCode(this.inviteCode);
       this.codeEntryVisible = false;
+      this.codeEntryError = '';
       await this.openInvite(response.invite.inviteId);
     } catch (error) {
-      this.status = clientErrorMessage(error);
+      const message = clientErrorMessage(error);
+      this.codeEntryError = message === 'Invitation code not found.'
+        ? 'That invitation code is invalid.'
+        : message;
+      this.status = '';
+      renderAfter = false;
+      const errorLabel = this.children.getByName('invite-code-error');
+      if (errorLabel instanceof GameObjects.Text) {
+        errorLabel.setText(this.codeEntryError);
+      }
     } finally {
       this.loading = false;
-      this.render();
+      if (renderAfter) {
+        this.render();
+      }
     }
   }
 
@@ -1689,6 +1811,19 @@ export class VersusLobby extends Scene {
     this.render();
   }
 
+  private openPublicPicker(): void {
+    if (!this.lobby) {
+      return;
+    }
+    const unfinished = unfinishedVersusMatchCount(this.lobby.matches);
+    if (unfinished >= this.lobby.rules.maxUnfinishedMatches) {
+      this.status = `You have ${unfinished} unfinished matches. Finish one before searching for another opponent.`;
+      this.render();
+      return;
+    }
+    this.openPicker('public');
+  }
+
   private clearPicker(): void {
     this.pickerMode = null;
     this.pickerMatchId = null;
@@ -1713,28 +1848,6 @@ export class VersusLobby extends Scene {
       return `${VERSUS_PATTERN_SIZE - this.selectedKeys.size} tiles left.`;
     }
     return validateVersusPattern(this.selectedPattern()).message;
-  }
-
-  private matchStatus(match: VersusMatchSummary): string {
-    if (match.status !== 'active') {
-      return match.outcome === 'win'
-        ? 'You won'
-        : match.outcome === 'loss'
-          ? 'Opponent won'
-          : match.outcome === 'draw'
-            ? 'Draw'
-            : 'Match ended';
-    }
-    if (match.myAttemptStatus === 'solved') {
-      return 'You finished · waiting for opponent';
-    }
-    return match.myAttemptStatus === 'playing'
-      ? "Continue solving your opponent's pattern"
-      : "Solve your opponent's pattern";
-  }
-
-  private sourceLabel(source: VersusMatchSummary['source']): string {
-    return source === 'public' ? 'Public match' : 'Invitation';
   }
 
   private createButton(
@@ -1795,6 +1908,40 @@ const clientErrorMessage = (error: unknown): string =>
 
 const isLocalPreview = (): boolean =>
   window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+const rewardReasonText = (rewards: ProgressReward[]): string => {
+  if (rewards.length === 0) {
+    return 'Progress reward';
+  }
+  if (rewards.length === 1) {
+    return rewardReasonLabel(rewards[0]!);
+  }
+  if (rewards.length === 2) {
+    return rewards.map(rewardReasonLabel).join('\n');
+  }
+
+  const latest = rewards.at(-1)!;
+  return `${rewards.length} completed match rewards\nLatest: ${rewardReasonLabel(latest)}`;
+};
+
+const rewardReasonLabel = (reward: ProgressReward): string => {
+  if (reward.label.startsWith('Win vs ')) {
+    return `Win against ${reward.label.slice('Win vs '.length)}`;
+  }
+  if (reward.label.startsWith('Draw vs ')) {
+    return `Draw with ${reward.label.slice('Draw vs '.length)}`;
+  }
+  if (reward.label.startsWith('Loss vs ')) {
+    return `Loss against ${reward.label.slice('Loss vs '.length)}`;
+  }
+  if (reward.label.startsWith('Match vs ')) {
+    const opponent = reward.label.slice('Match vs '.length);
+    if (reward.amount === VERSUS_WIN_XP) return `Win against ${opponent}`;
+    if (reward.amount === VERSUS_DRAW_XP) return `Draw with ${opponent}`;
+    if (reward.amount === VERSUS_LOSS_XP) return `Loss against ${opponent}`;
+  }
+  return reward.label;
+};
 
 const formatDuration = (durationMs: number): string => {
   const totalSeconds = Math.floor(durationMs / 1000);

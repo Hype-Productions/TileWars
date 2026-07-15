@@ -45,7 +45,7 @@
         </button>
         <button class="mode-button secondary" id="versus-button" type="button">
           <span class="button-kicker">Versus</span>
-          <span class="button-label">1v1 Battle</span>
+          <span class="button-label">1v1 Match</span>
         </button>
       </nav>
 
@@ -85,17 +85,13 @@
         role="dialog"
         aria-modal="true"
         aria-labelledby="invite-title"
-        aria-describedby="invite-message invite-guidance"
+        aria-describedby="invite-message invite-status"
         hidden
       >
         <section class="invite-panel">
-          <span class="invite-kicker">1V1 Challenge</span>
           <h2 id="invite-title">Versus Invitation</h2>
           <p class="invite-message" id="invite-message">
-            A rival challenged you to a battle.
-          </p>
-          <p class="invite-guidance" id="invite-guidance">
-            Accept, choose your 6-tile pattern, and fight for the win.
+            A player has invited you to a 1v1 match.
           </p>
           <p class="invite-status" id="invite-status" aria-live="polite"></p>
           <div class="invite-actions">

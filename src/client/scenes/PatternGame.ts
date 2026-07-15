@@ -242,7 +242,7 @@ export class PatternGame extends Scene {
         data.session.solved
           ? `Solved in ${data.session.guesses.length} guesses.`
           : 'Tap a tile to make your guess.',
-        data.session.solved ? 'result' : 'none'
+        'none'
       );
     } catch (error) {
       console.warn('Falling back to local daily session:', error);
@@ -438,11 +438,12 @@ export class PatternGame extends Scene {
   private drawGameToolbar(mobile: boolean, shortLandscape: boolean): void {
     const width = this.scale.width;
     const height = this.scale.height;
+    const completedDaily = this.isCompletedDaily();
 
     if (mobile || shortLandscape) {
       const y = shortLandscape ? height - 24 : height - 58;
       this.createButton(
-        width / 2 - 118,
+        width / 2 - (completedDaily ? 48 : 118),
         y,
         'Home',
         (pointer) => {
@@ -451,7 +452,7 @@ export class PatternGame extends Scene {
         'orange'
       );
       this.createButton(
-        width / 2,
+        width / 2 + (completedDaily ? 48 : 0),
         y,
         'Help',
         () => {
@@ -460,6 +461,9 @@ export class PatternGame extends Scene {
         },
         'blue'
       );
+      if (completedDaily) {
+        return;
+      }
       this.createButton(
         width / 2 + 118,
         y,
@@ -478,7 +482,7 @@ export class PatternGame extends Scene {
 
     const y = height - 82;
     this.createButton(
-      width / 2 - 158,
+      width / 2 - (completedDaily ? 48 : 158),
       y,
       'Home',
       (pointer) => {
@@ -487,7 +491,7 @@ export class PatternGame extends Scene {
       'orange'
     );
     this.createButton(
-      width / 2,
+      width / 2 + (completedDaily ? 48 : 0),
       y,
       'Help',
       () => {
@@ -496,6 +500,9 @@ export class PatternGame extends Scene {
       },
       'blue'
     );
+    if (completedDaily) {
+      return;
+    }
     this.createButton(
       width / 2 + 158,
       y,
@@ -589,11 +596,16 @@ export class PatternGame extends Scene {
     );
     const earnedXp = this.dailyReward?.amount ??
       (this.progress ? dailyXpForStreak(this.progress.dailyStreak) : 0);
-    const initialProgress =
-      this.progress && this.dailyReward
+    const pendingReward =
+      this.dailyReward &&
+      !this.acknowledgedRewardIds.has(this.dailyReward.rewardId)
+        ? this.dailyReward
+        : null;
+    const displayedProgress =
+      this.progress && pendingReward
         ? summarizeProgress({
             ...this.progress,
-            totalXp: this.dailyReward.previousTotalXp,
+            totalXp: pendingReward.previousTotalXp,
           })
         : this.progress;
 
@@ -645,9 +657,9 @@ export class PatternGame extends Scene {
     );
     this.drawResultMetric(summaryCenter + summaryWidth * 0.2, statY, 'Time', elapsed);
 
-    if (initialProgress) {
+    if (displayedProgress) {
       this.add
-        .text(summaryCenter, y + 145, `Level ${initialProgress.level}`, {
+        .text(summaryCenter, y + 145, `Level ${displayedProgress.level}`, {
           fontFamily: 'Arial Black, Arial, sans-serif',
           fontSize: '15px',
           color: '#25313b',
@@ -658,7 +670,7 @@ export class PatternGame extends Scene {
         .text(
           summaryCenter,
           y + 167,
-          `${initialProgress.levelXp}/${initialProgress.xpForNextLevel} XP · +${earnedXp} XP earned`,
+          `${displayedProgress.levelXp}/${displayedProgress.xpForNextLevel} XP · +${earnedXp} XP earned`,
           {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: mobile ? '11px' : '12px',
@@ -683,12 +695,12 @@ export class PatternGame extends Scene {
     this.createButton(
       summaryCenter - 76,
       y + modalHeight - 34,
-      'Close',
+      'Back',
       () => {
         this.modal = 'none';
         this.renderScreen();
       },
-      'dark'
+      'orange'
     );
     this.createButton(
       summaryCenter + 76,
@@ -908,6 +920,7 @@ export class PatternGame extends Scene {
 
   private showSolvedPatternReveal(): void {
     this.modal = 'none';
+    this.markerMode = false;
     this.showingSolvedReveal = true;
     this.currentStatus = 'Pattern complete!';
     this.renderScreen();
@@ -983,6 +996,13 @@ export class PatternGame extends Scene {
       return;
     }
 
+    if (this.isCompletedDaily()) {
+      if (this.modal === 'none' && !this.showingSolvedReveal) {
+        this.showSolvedPatternReveal();
+      }
+      return;
+    }
+
     const key = coordKey(coord);
 
     if (this.markerMode) {
@@ -1011,6 +1031,12 @@ export class PatternGame extends Scene {
     }
 
     void this.submitActiveGuess(coord);
+  }
+
+  private isCompletedDaily(): boolean {
+    return (
+      this.session?.puzzleId.mode === 'daily' && this.session.solved === true
+    );
   }
 
   private async submitActiveGuess(coord: Coord): Promise<void> {

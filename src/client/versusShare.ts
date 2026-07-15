@@ -7,6 +7,8 @@ import {
 
 const INVITE_INTENT_KEY = 'tilewars:versus-invite-intent';
 const INVITE_INTENT_MAX_AGE_MS = 10 * 60 * 1000;
+const HANDLED_INVITE_KEY_PREFIX = 'tilewars:handled-versus-invite:';
+const HANDLED_INVITE_MAX_AGE_MS = 72 * 60 * 60 * 1000;
 
 export type VersusInviteIntent = VersusShareData & {
   action: 'accept';
@@ -71,6 +73,38 @@ export const clearVersusInviteIntent = (): void => {
       // Storage can be disabled in embedded browsers.
     }
   }
+};
+
+export const markVersusInviteHandled = (inviteId: string): void => {
+  const key = `${HANDLED_INVITE_KEY_PREFIX}${inviteId}`;
+  const handledAt = String(Date.now());
+  for (const storage of availableStorages()) {
+    try {
+      storage.setItem(key, handledAt);
+    } catch {
+      // The other storage can still suppress the already handled invitation.
+    }
+  }
+};
+
+export const wasVersusInviteHandled = (inviteId: string): boolean => {
+  const key = `${HANDLED_INVITE_KEY_PREFIX}${inviteId}`;
+  for (const storage of availableStorages()) {
+    try {
+      const handledAt = Number(storage.getItem(key));
+      if (
+        Number.isFinite(handledAt) &&
+        handledAt > 0 &&
+        Date.now() - handledAt <= HANDLED_INVITE_MAX_AGE_MS
+      ) {
+        return true;
+      }
+      storage.removeItem(key);
+    } catch {
+      // Storage can be disabled in embedded browsers.
+    }
+  }
+  return false;
 };
 
 const availableStorages = (): Storage[] => {

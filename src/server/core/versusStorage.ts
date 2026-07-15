@@ -13,9 +13,11 @@ import { todayUtcDate } from '../../shared/pattern';
 import {
   replayForSession,
   resolveVersusScores,
+  VERSUS_INVITATION_DURATION_MS,
   VERSUS_MATCH_DURATION_MS,
   VERSUS_MATCHMAKING_DURATION_MS,
   VERSUS_MAX_OPPONENTS,
+  VERSUS_MAX_UNFINISHED_MATCHES,
   type VersusAttemptStatus,
   type VersusLobbyResponse,
   type VersusInviteResponse,
@@ -52,6 +54,8 @@ const CANDIDATE_LIMIT = 50;
 const ARCHIVE_SECONDS = 30 * 24 * 60 * 60;
 const MATCHMAKING_SCORE_BUCKET = 10_000_000_000_000;
 const TRANSACTION_RETRIES = 4;
+const INVITE_CODE_LENGTH = 5;
+const INVITE_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 
 type VersusUser = {
   userId: string;
@@ -135,6 +139,8 @@ export const versusStorageKeys = {
   activeRound: (userId: string): string => `versus:user:${userId}:active-round`,
   match: (matchId: string): string => `versus:match:${matchId}`,
   userMatches: (userId: string): string => `versus:user:${userId}:matches`,
+  unfinishedMatches: (userId: string): string =>
+    `versus:user:${userId}:unfinished-matches`,
   rematch: (sourceMatchId: string): string =>
     `versus:rematch:${sourceMatchId}`,
   invite: (inviteId: string): string => `versus:invite:${inviteId}`,
@@ -191,16 +197,17 @@ export const createVersusRound = async (
     throw new VersusStorageError(validation.message, 400);
   }
 
+  const now = Date.now();
   const existing = await loadActiveRound(user.userId);
   if (existing) {
-    const normalized = await normalizeRound(existing, Date.now());
-    if (normalized.status !== 'complete') {
-      throw new VersusStorageError('Finish or close your active round first.', 409);
+    const normalized = await normalizeRound(existing, now);
+    if (normalized.status === 'matching') {
+      throw new VersusStorageError('You are already searching for an opponent.', 409);
     }
-    await redis.del(versusStorageKeys.activeRound(user.userId));
+    await clearActiveRoundIfCurrent(user.userId, normalized.roundId);
   }
 
-  const now = Date.now();
+  await assertPublicSearchCapacity(user.userId, now);
   const round: VersusRoundRecord = {
     roundId: randomUUID(),
     userId: user.userId,
@@ -231,7 +238,7 @@ export const createVersusRound = async (
       score: queueScore(round),
     });
   } catch (error) {
-    await redis.del(activeKey);
+    await clearActiveRoundIfCurrent(user.userId, round.roundId);
     throw error;
   }
 
@@ -251,6 +258,10 @@ export const matchmakeVersusRound = async (
     const normalized = await normalizeRound(current, now);
     if (normalized.status !== 'matching') {
       return null;
+    }
+    if (!(await hasPublicSearchCapacity(userId, now))) {
+      await closeVersusRound(userId);
+      throw publicSearchLimitError();
     }
 
     const candidateMembers = await redis.zRange(
@@ -273,6 +284,13 @@ export const matchmakeVersusRound = async (
       }
 
       const ready = await normalizeRound(loaded, now);
+      if (
+        ready.status === 'matching' &&
+        !(await hasPublicSearchCapacity(ready.userId, now))
+      ) {
+        await closeVersusRound(ready.userId);
+        continue;
+      }
       if (
         ready.status === 'matching' &&
         ready.userId !== userId &&
@@ -349,10 +367,18 @@ export const matchmakeVersusRound = async (
         member: match.matchId,
         score: now,
       });
+      await transaction.zAdd(
+        versusStorageKeys.unfinishedMatches(freshCurrent.userId),
+        { member: match.matchId, score: now }
+      );
       await transaction.zAdd(versusStorageKeys.userMatches(freshCandidate.userId), {
         member: match.matchId,
         score: now,
       });
+      await transaction.zAdd(
+        versusStorageKeys.unfinishedMatches(freshCandidate.userId),
+        { member: match.matchId, score: now }
+      );
       await transaction.zRemRangeByRank(
         versusStorageKeys.userMatches(freshCurrent.userId),
         0,
@@ -389,7 +415,7 @@ export const closeVersusRound = async (userId: string): Promise<void> => {
   await redis.set(versusStorageKeys.round(round.roundId), JSON.stringify(next));
   await redis.zRem(versusStorageKeys.queue, [round.roundId]);
   if (status === 'complete') {
-    await redis.del(versusStorageKeys.activeRound(userId));
+    await clearActiveRoundIfCurrent(userId, round.roundId);
   }
 };
 
@@ -716,7 +742,10 @@ export const createVersusInvite = async (
   const now = Date.now();
   const inviteId = randomUUID();
   const shareUrl = createShareUrl ? await createShareUrl(inviteId) : null;
-  const inviteCode = await createInviteCode(inviteId, now + VERSUS_MATCH_DURATION_MS);
+  const inviteCode = await createInviteCode(
+    inviteId,
+    now + VERSUS_INVITATION_DURATION_MS
+  );
   const invite: VersusInviteRecord = {
     inviteId,
     inviteCode,
@@ -725,7 +754,7 @@ export const createVersusInvite = async (
     pattern,
     status: 'open',
     createdAt: now,
-    expiresAt: now + VERSUS_MATCH_DURATION_MS,
+    expiresAt: now + VERSUS_INVITATION_DURATION_MS,
     acceptedBy: null,
     matchId: null,
   };
@@ -1009,6 +1038,7 @@ const mutateMatch = async (
       if (result === null) {
         continue;
       }
+      await syncUnfinishedMatchIndexes(next);
       return next;
     } catch {
       continue;
@@ -1033,6 +1063,10 @@ const addMatchToTransaction = async (
       member: match.matchId,
       score: now,
     });
+    await transaction.zAdd(
+      versusStorageKeys.unfinishedMatches(participant.userId),
+      { member: match.matchId, score: now }
+    );
     await transaction.zRemRangeByRank(
       versusStorageKeys.userMatches(participant.userId),
       0,
@@ -1187,7 +1221,7 @@ const createRematchRecord = (
     requesterPattern,
     status: 'pending',
     createdAt: now,
-    expiresAt: now + VERSUS_MATCH_DURATION_MS,
+    expiresAt: now + VERSUS_INVITATION_DURATION_MS,
     createdMatchId: null,
   };
 };
@@ -1254,6 +1288,7 @@ const settleSaveAndFinalizeMatch = async (
       JSON.stringify(settled)
     );
   }
+  await syncUnfinishedMatchIndexes(settled);
   return finalizeMatchProgress(settled);
 };
 
@@ -1347,7 +1382,7 @@ const normalizeRound = async (
   await redis.set(versusStorageKeys.round(round.roundId), JSON.stringify(next));
   await redis.zRem(versusStorageKeys.queue, [round.roundId]);
   if (next.status === 'complete') {
-    await redis.del(versusStorageKeys.activeRound(round.userId));
+    await clearActiveRoundIfCurrent(round.userId, round.roundId);
   }
   return next;
 };
@@ -1368,7 +1403,7 @@ const completeRoundIfReady = async (
   ) {
     const next = { ...round, status: 'complete' as const };
     await redis.set(versusStorageKeys.round(round.roundId), JSON.stringify(next));
-    await redis.del(versusStorageKeys.activeRound(round.userId));
+    await clearActiveRoundIfCurrent(round.userId, round.roundId);
   }
 };
 
@@ -1522,6 +1557,89 @@ const loadUserMatchRecords = async (
   return records;
 };
 
+const unfinishedMatchCount = async (
+  userId: string,
+  now: number
+): Promise<number> => {
+  for (const match of await loadUserMatchRecords(userId)) {
+    await syncUnfinishedMatchIndexes(match);
+  }
+  const members = await redis.zRange(
+    versusStorageKeys.unfinishedMatches(userId),
+    0,
+    -1,
+    { by: 'rank' }
+  );
+  let count = 0;
+  for (const member of members) {
+    const match = await loadMatch(member.member);
+    if (!match) {
+      await redis.zRem(versusStorageKeys.unfinishedMatches(userId), [member.member]);
+      continue;
+    }
+    const settled = await settleSaveAndFinalizeMatch(match, now);
+    if (
+      settled.status === 'active' &&
+      sessionForUser(settled, userId)?.solved !== true
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+};
+
+const syncUnfinishedMatchIndexes = async (
+  match: VersusMatchRecord
+): Promise<void> => {
+  for (const participant of [match.participantA, match.participantB]) {
+    const key = versusStorageKeys.unfinishedMatches(participant.userId);
+    const unfinished =
+      match.status === 'active' &&
+      sessionForUser(match, participant.userId)?.solved !== true;
+    if (unfinished) {
+      await redis.zAdd(key, { member: match.matchId, score: match.createdAt });
+    } else {
+      await redis.zRem(key, [match.matchId]);
+    }
+  }
+};
+
+const hasPublicSearchCapacity = async (
+  userId: string,
+  now: number
+): Promise<boolean> =>
+  (await unfinishedMatchCount(userId, now)) < VERSUS_MAX_UNFINISHED_MATCHES;
+
+const publicSearchLimitError = (): VersusStorageError =>
+  new VersusStorageError(
+    `You have ${VERSUS_MAX_UNFINISHED_MATCHES} unfinished matches. Finish one before searching for another opponent.`,
+    409
+  );
+
+const assertPublicSearchCapacity = async (
+  userId: string,
+  now: number
+): Promise<void> => {
+  if (!(await hasPublicSearchCapacity(userId, now))) {
+    throw publicSearchLimitError();
+  }
+};
+
+const clearActiveRoundIfCurrent = async (
+  userId: string,
+  roundId: string
+): Promise<void> => {
+  const key = versusStorageKeys.activeRound(userId);
+  const transaction = await redis.watch(key);
+  if ((await redis.get(key)) !== roundId) {
+    await transaction.unwatch();
+    return;
+  }
+  await transaction.multi();
+  await transaction.del(key);
+  await transaction.exec();
+};
+
 const loadPendingItems = async (
   userId: string,
   matches: VersusMatchRecord[],
@@ -1628,7 +1746,7 @@ const createInviteCode = async (
   expiresAt: number
 ): Promise<string> => {
   for (let attempt = 0; attempt < TRANSACTION_RETRIES; attempt += 1) {
-    const code = randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase();
+    const code = randomInviteCode();
     const claimed = await redis.set(versusStorageKeys.inviteCode(code), inviteId, {
       nx: true,
       expiration: new Date(expiresAt + ARCHIVE_SECONDS * 1000),
@@ -1638,6 +1756,17 @@ const createInviteCode = async (
     }
   }
   throw new VersusStorageError('Could not create an invitation code.', 409);
+};
+
+const randomInviteCode = (): string => {
+  let value = BigInt(`0x${randomUUID().replaceAll('-', '')}`);
+  let code = '';
+  const alphabetSize = BigInt(INVITE_CODE_ALPHABET.length);
+  for (let index = 0; index < INVITE_CODE_LENGTH; index += 1) {
+    code += INVITE_CODE_ALPHABET.charAt(Number(value % alphabetSize));
+    value /= alphabetSize;
+  }
+  return code;
 };
 
 const normalizeInvite = async (

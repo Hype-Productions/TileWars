@@ -1,4 +1,4 @@
-import { GameObjects, Input, Scene } from 'phaser';
+import { GameObjects, Input, Scene, Scenes } from 'phaser';
 import type { RivalryOutcome } from '../../shared/progression';
 import {
   rivalryOutcomeColor,
@@ -65,6 +65,24 @@ const TITLE_COLORS = [
   TILE_WARS_COLORS.blue,
   TILE_WARS_COLORS.orange,
 ] as const;
+
+const TEXT_RESOLUTION =
+  typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+
+const improveTextRendering = (gameObject: GameObjects.GameObject): void => {
+  if (!(gameObject instanceof GameObjects.Text)) {
+    return;
+  }
+  gameObject.setResolution(TEXT_RESOLUTION);
+  if (gameObject.style.fontFamily.includes('Arial Black')) {
+    gameObject.setFontStyle('bold');
+  }
+};
+
+const installTextRenderingDefaults = (scene: Scene): void => {
+  scene.events.off(Scenes.Events.ADDED_TO_SCENE, improveTextRendering);
+  scene.events.on(Scenes.Events.ADDED_TO_SCENE, improveTextRendering);
+};
 
 const paintTileWarsBackdrop = (
   graphics: GameObjects.Graphics,
@@ -194,6 +212,7 @@ export const ensureTileWarsSceneShell = (
     maxHeadingSize?: number;
   }
 ): TileWarsSceneShell => {
+  installTextRenderingDefaults(scene);
   const maxHeadingSize = options.maxHeadingSize ?? 34;
   const signature = [
     options.width,
@@ -465,7 +484,7 @@ export const drawHowToPlayModal = (
   );
   const modalHeight = Math.min(
     height - modalInset * 2,
-    landscape ? height - 10 : compact ? 590 : 580
+    landscape ? height - 10 : compact ? 590 : 620
   );
   const x = (width - modalWidth) / 2;
   const y = (height - modalHeight) / 2;
@@ -551,23 +570,34 @@ export const drawHowToPlayModal = (
     }
   }
   const clues = [
-    { label: 'Green — This tile is part of the pattern.', color: TILE_WARS_COLORS.green },
-    { label: 'Red — The pattern has at least one tile in this column.', color: TILE_WARS_COLORS.red },
-    { label: 'Blue — The pattern has at least one tile in this row.', color: TILE_WARS_COLORS.blue },
-    { label: 'Orange — At least one pattern tile lies diagonally from here.', color: TILE_WARS_COLORS.orange },
-    { label: 'X — Mark tiles you’ve ruled out to plan your next move.', color: TILE_WARS_COLORS.line },
+    { label: 'Green — This tile is part of the pattern.', colors: [TILE_WARS_COLORS.green] },
+    { label: 'Red — The pattern has at least one tile in this column.', colors: [TILE_WARS_COLORS.red] },
+    { label: 'Blue — The pattern has at least one tile in this row.', colors: [TILE_WARS_COLORS.blue] },
+    { label: 'Orange — At least one pattern tile lies diagonally from here.', colors: [TILE_WARS_COLORS.orange] },
+    { label: 'Multicolored tiles give a combination of clues.', colors: [TILE_WARS_COLORS.red, TILE_WARS_COLORS.blue, TILE_WARS_COLORS.orange] },
+    { label: 'X — Mark tiles you’ve ruled out to plan your next move.', colors: [TILE_WARS_COLORS.line] },
   ];
   const clueX = landscape ? x + modalWidth * 0.53 : x + 16;
   const clueStart = landscape ? y + 78 : sampleY + sampleSize + (compact ? 16 : 20);
   const availableClueWidth = landscape
     ? modalWidth * 0.45 - 32
     : modalWidth - 62;
-  const clueStep = landscape ? 47 : compact ? 43 : 45;
+  const clueStep = landscape ? 43 : compact ? 37 : 39;
   clues.forEach((clue, index) => {
     const rowY = clueStart + index * clueStep;
     const swatch = scene.add.graphics();
-    swatch.fillStyle(clue.color, 1);
-    swatch.fillRoundedRect(clueX, rowY - 12, 24, 24, 6);
+    const swatchGap = clue.colors.length > 1 ? 1 : 0;
+    const swatchWidth = (24 - swatchGap * (clue.colors.length - 1)) / clue.colors.length;
+    clue.colors.forEach((color, colorIndex) => {
+      swatch.fillStyle(color, 1);
+      swatch.fillRoundedRect(
+        clueX + colorIndex * (swatchWidth + swatchGap),
+        rowY - 12,
+        swatchWidth,
+        24,
+        clue.colors.length > 1 ? 2 : 6
+      );
+    });
     swatch.lineStyle(1, TILE_WARS_COLORS.line, 0.55);
     swatch.strokeRoundedRect(clueX, rowY - 12, 24, 24, 6);
     container.add(swatch);

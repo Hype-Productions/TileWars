@@ -159,7 +159,7 @@ export const awardVersusProgress = async (
           ? `Win vs ${opponentDisplayName}`
           : outcome === 'draw'
             ? `Draw vs ${opponentDisplayName}`
-            : `Match vs ${opponentDisplayName}`,
+            : `Loss vs ${opponentDisplayName}`,
     };
   });
 };

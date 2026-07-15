@@ -13,6 +13,7 @@ import {
   parseVersusShareUrl,
   replayForSession,
   resolveVersusScores,
+  unfinishedVersusMatchCount,
   validateVersusPattern,
   versusRules,
   versusScoreForSession,
@@ -34,6 +35,23 @@ const puzzleId: PuzzleId = {
 describe('versus rules', () => {
   it('creates one opponent per public search', () => {
     expect(versusRules().maxOpponents).toBe(1);
+    expect(versusRules().maxUnfinishedMatches).toBe(5);
+    expect(versusRules().matchDurationMs).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it('counts only active matches the player has not solved', () => {
+    const match = {
+      status: 'active',
+      myAttemptStatus: 'not-started',
+    };
+    expect(
+      unfinishedVersusMatchCount([
+        { ...match, status: 'active', myAttemptStatus: 'not-started' },
+        { ...match, status: 'active', myAttemptStatus: 'playing' },
+        { ...match, status: 'active', myAttemptStatus: 'solved' },
+        { ...match, status: 'complete', myAttemptStatus: 'not-started' },
+      ])
+    ).toBe(2);
   });
 
   it('requires exactly six connected tiles', () => {
