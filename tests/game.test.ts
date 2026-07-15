@@ -5,6 +5,7 @@ import {
   createDailyPuzzleId,
   createInitialSession,
   createShareText,
+  formatElapsedTime,
   leaderboardScore,
   leaderboardRankColor,
   selectLeaderboardDisplayRows,
@@ -85,6 +86,11 @@ describe('player sessions', () => {
 });
 
 describe('results', () => {
+  it('formats result time in one shared display format', () => {
+    expect(formatElapsedTime(123000)).toBe('2m 03s');
+    expect(formatElapsedTime(-1)).toBe('0s');
+  });
+
   it('orders leaderboard score by guesses before solve time', () => {
     expect(leaderboardScore(5, 999)).toBeLessThan(leaderboardScore(6, 1));
     expect(leaderboardScore(5, 100)).toBeLessThan(leaderboardScore(5, 200));
@@ -99,6 +105,26 @@ describe('results', () => {
 
     expect(createShareText(session)).toContain('1 found in 1 guesses');
     expect(createShareText(session)).not.toContain('A1');
+  });
+
+  it('creates the daily result comment from the shared result time', () => {
+    const session = {
+      ...createInitialSession(createDailyPuzzleId('2026-07-08'), 4, 1000),
+      solved: true,
+      solvedAt: 124000,
+    };
+
+    expect(createShareText(session, 4)).toBe(
+      [
+        '🟥 TILEWARS Daily #2',
+        '',
+        '✅ Pattern complete in 0 guesses',
+        `⏱️ Solved in ${formatElapsedTime(123000)}`,
+        '🔥 4-day streak',
+        '',
+        'Can you beat my score?',
+      ].join('\n')
+    );
   });
 
   it('shows the top three, the player, and the final-ranked player', () => {

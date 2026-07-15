@@ -208,17 +208,37 @@ api.post('/daily/comment-result', async (c) => {
     );
   }
 
-  const comment = await reddit.submitComment({
-    id: postId,
-    text: createShareText(session),
-    runAs: 'USER',
-  });
+  let dailyStreak: number | undefined;
+  try {
+    dailyStreak = (
+      await loadProgressSummary(user.userId, session.puzzleId.date)
+    ).dailyStreak;
+  } catch (error) {
+    console.warn('Could not load daily streak for result comment:', error);
+  }
 
-  return c.json<DailyCommentResultResponse>({
-    type: 'daily-comment-result',
-    status: 'posted',
-    commentId: comment.id,
-  });
+  try {
+    const comment = await reddit.submitComment({
+      id: postId,
+      text: createShareText(session, dailyStreak),
+      runAs: 'USER',
+    });
+
+    return c.json<DailyCommentResultResponse>({
+      type: 'daily-comment-result',
+      status: 'posted',
+      commentId: comment.id,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Could not post result.';
+    console.error('Daily result comment failed:', {
+      message,
+      postId,
+      userId: user.userId,
+    });
+    return c.json({ status: 'error', message }, 500);
+  }
 });
 
 api.post('/daily/dev-reset', async (c) => {

@@ -12,6 +12,7 @@ import type {
   PlayerProgressSummary,
   ProgressReward,
 } from './progression';
+import { formatDuration } from './time';
 
 export type GameMode =
   | 'daily'
@@ -221,14 +222,39 @@ export const setClueModeInSession = (
   };
 };
 
-export const createShareText = (session: PlayerSession): string => {
-  const title =
-    session.puzzleId.mode === 'daily' ? 'TILEWARS Daily' : 'TILEWARS';
-  const result = session.solved
-    ? `Solved in ${session.guesses.length} guesses`
-    : `${session.foundKeys.length} found in ${session.guesses.length} guesses`;
+export const formatElapsedTime = (durationMs: number): string => {
+  return formatDuration(durationMs);
+};
 
-  return `${title}\n${result}\n${session.puzzleId.date}`;
+export const createShareText = (
+  session: PlayerSession,
+  dailyStreak?: number
+): string => {
+  if (session.puzzleId.mode !== 'daily') {
+    const result = session.solved
+      ? `Solved in ${session.guesses.length} guesses`
+      : `${session.foundKeys.length} found in ${session.guesses.length} guesses`;
+    return `TILEWARS\n${result}\n${session.puzzleId.date}`;
+  }
+
+  const lines = [`🟥 TILEWARS Daily #${session.puzzleId.puzzleNumber}`, ''];
+  if (session.solved && session.solvedAt !== null) {
+    lines.push(
+      `✅ Pattern complete in ${session.guesses.length} guesses`,
+      `⏱️ Solved in ${formatElapsedTime(session.solvedAt - session.startedAt)}`
+    );
+  } else {
+    lines.push(
+      `🟨 ${session.foundKeys.length} found in ${session.guesses.length} guesses`
+    );
+  }
+
+  if (dailyStreak !== undefined && dailyStreak > 0) {
+    lines.push(`🔥 ${dailyStreak}-day streak`);
+  }
+
+  lines.push('', 'Can you beat my score?');
+  return lines.join('\n');
 };
 
 export const leaderboardScore = (guesses: number, solvedAt: number): number => {

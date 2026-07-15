@@ -22,7 +22,8 @@
   },
   "permissions": {
     "reddit": {
-      "scope": "user"
+      "scope": "user",
+      "asUser": ["SUBMIT_COMMENT"]
     }
   },
   "menu": {

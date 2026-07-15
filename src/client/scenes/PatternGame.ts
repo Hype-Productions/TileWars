@@ -118,6 +118,7 @@ export class PatternGame extends Scene {
   private dailyReward: ProgressReward | null = null;
   private acknowledgedRewardIds = new Set<string>();
   private showingSolvedReveal = false;
+  private commentStatus: 'idle' | 'posting' | 'posted' | 'error' = 'idle';
   private sceneShell: TileWarsSceneShell | null = null;
 
   constructor() {
@@ -737,20 +738,24 @@ export class PatternGame extends Scene {
       shortLandscape ? modalWidth * 0.45 : modalWidth - 48
     );
 
+    const resultMessage =
+      this.commentStatus === 'idle'
+        ? 'Comment your result to the subreddit game post!'
+        : this.commentStatusMessage();
     this.add
-      .text(
-        summaryCenter,
-        y + modalHeight - 72,
-        'Comment your result to the subreddit game post!',
-        {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: mobile ? '10px' : '11px',
-          color: '#FF4500',
-          align: 'center',
-          wordWrap: { width: summaryWidth - 20 },
-          resolution: TEXT_RESOLUTION,
-        }
-      )
+      .text(summaryCenter, y + modalHeight - 72, resultMessage, {
+        fontFamily: 'Arial Black, Arial, sans-serif',
+        fontSize: mobile ? '10px' : '11px',
+        color:
+          this.commentStatus === 'error'
+            ? '#b72d3c'
+            : this.commentStatus === 'idle'
+              ? '#FF4500'
+              : '#53606b',
+        align: 'center',
+        wordWrap: { width: summaryWidth - 20 },
+        resolution: TEXT_RESOLUTION,
+      })
       .setOrigin(0.5);
 
     const resultButtonGap = 12;
@@ -773,12 +778,13 @@ export class PatternGame extends Scene {
     this.createButton(
       summaryCenter + resultButtonOffset,
       y + modalHeight - 34,
-      'Post Result',
+      this.commentButtonLabel(),
       () => {
         void this.commentResult();
       },
       'reddit',
-      resultButtonWidth
+      resultButtonWidth,
+      this.commentStatus === 'posting' || this.commentStatus === 'posted'
     );
   }
 
@@ -1083,7 +1089,8 @@ export class PatternGame extends Scene {
     label: string,
     onClick: (pointer: Input.Pointer) => void,
     variant: ButtonVariant = 'dark',
-    width?: number
+    width?: number,
+    disabled = false
   ): GameObjects.Container {
     const button = drawTileButton(this, {
       x,
@@ -1091,6 +1098,7 @@ export class PatternGame extends Scene {
       label,
       variant,
       ...(width === undefined ? {} : { width }),
+      disabled,
       fontSize: 14,
       onClick,
     });
@@ -1116,22 +1124,58 @@ export class PatternGame extends Scene {
   }
 
   private async commentResult(): Promise<void> {
-    if (!this.session) {
+    if (
+      !this.session ||
+      this.commentStatus === 'posting' ||
+      this.commentStatus === 'posted'
+    ) {
       return;
     }
+
+    this.commentStatus = 'posting';
+    this.renderScreen();
 
     try {
       const response = await fetch('/api/daily/comment-result', {
         method: 'POST',
       });
       if (!response.ok) {
-        throw new Error(`Comment failed: ${response.status}`);
+        const body: unknown = await response.json().catch(() => null);
+        const message =
+          isRecord(body) && typeof body.message === 'string'
+            ? body.message
+            : `Comment failed: ${response.status}`;
+        throw new Error(message);
       }
-      this.currentStatus = 'Result commented.';
-    } catch {
-      this.currentStatus = 'Could not comment result.';
+      this.commentStatus = 'posted';
+    } catch (error) {
+      console.error('Daily result comment failed:', error);
+      this.commentStatus = 'error';
     }
     this.renderScreen();
+  }
+
+  private commentButtonLabel(): string {
+    if (this.commentStatus === 'posting') {
+      return 'Posting...';
+    }
+    if (this.commentStatus === 'posted') {
+      return 'Commented!';
+    }
+    if (this.commentStatus === 'error') {
+      return 'Try Again';
+    }
+    return 'Post Result';
+  }
+
+  private commentStatusMessage(): string {
+    if (this.commentStatus === 'posting') {
+      return 'Posting your result...';
+    }
+    if (this.commentStatus === 'posted') {
+      return 'Your result is on the post!';
+    }
+    return 'Could not post. Try again.';
   }
 
   private handleTile(coord: Coord): void {
@@ -1722,7 +1766,6 @@ const snapBoardSize = (size: number): number => {
 
 const formatLeaderboardTime = (durationMs: number | undefined): string =>
   formatOptionalDuration(durationMs);
-
 const formatDailyDate = (date: string): string => {
   const parsed = new Date(`${date}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime())
