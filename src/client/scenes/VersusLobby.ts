@@ -75,6 +75,7 @@ type PickerMode =
 type LobbySceneData = {
   rematchMatchId?: string;
   inviteId?: string;
+  acceptInvite?: boolean;
   historyReturn?: {
     opponent: RivalryOpponentSummary;
     page: number;
@@ -99,6 +100,7 @@ export class VersusLobby extends Scene {
   private pickerRequestId: string | null = null;
   private pickerInviteId: string | null = null;
   private pendingInviteId: string | null = null;
+  private acceptPendingInvite = false;
   private incomingInvite: VersusInviteSummary | null = null;
   private selectedKeys = new Set<string>();
   private status = 'Loading TILEWARS...';
@@ -133,7 +135,10 @@ export class VersusLobby extends Scene {
     this.pickerInviteId = null;
     this.pendingInviteId =
       data.inviteId ?? this.registry.get('sharedInviteId') ?? null;
+    this.acceptPendingInvite =
+      data.acceptInvite === true || this.registry.get('acceptSharedInvite') === true;
     this.registry.remove('sharedInviteId');
+    this.registry.remove('acceptSharedInvite');
     this.incomingInvite = null;
     this.selectedKeys.clear();
     this.rewardVisible = false;
@@ -180,9 +185,11 @@ export class VersusLobby extends Scene {
       return;
     }
     const inviteId = this.pendingInviteId;
+    const acceptInvite = this.acceptPendingInvite;
     this.pendingInviteId = null;
+    this.acceptPendingInvite = false;
     if (inviteId) {
-      await this.openInvite(inviteId);
+      await this.openInvite(inviteId, acceptInvite);
     }
   }
 
@@ -1215,7 +1222,7 @@ export class VersusLobby extends Scene {
     }
   }
 
-  private async openInvite(inviteId: string): Promise<void> {
+  private async openInvite(inviteId: string, acceptImmediately = false): Promise<void> {
     try {
       const response = await getVersusInvite(inviteId);
       if (response.matchedMatchId && response.invite.role !== 'viewer') {
@@ -1238,6 +1245,10 @@ export class VersusLobby extends Scene {
         this.pickerMode = 'invite-answer';
         this.pickerInviteId = response.invite.inviteId;
       } else if (response.invite.status === 'open') {
+        if (acceptImmediately) {
+          await this.acceptInvite(response.invite.inviteId);
+          return;
+        }
         this.incomingInvite = response.invite;
       } else {
         this.status = 'This invitation is no longer available.';
@@ -1448,9 +1459,23 @@ export class VersusLobby extends Scene {
   }
 
   private async shareInvite(invite: VersusInviteSummary): Promise<void> {
+    const title = 'TILEWARS invitation';
+    const text = `I made a hidden pattern for you. Invite code: ${invite.inviteCode}`;
+    if (invite.shareUrl && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title, text, url: invite.shareUrl });
+        this.status = 'Invite link ready. Waiting for opponent to accept.';
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          this.status = 'Invitation sharing cancelled.';
+          return;
+        }
+      }
+    }
     await showShareSheet({
-      title: 'TILEWARS invitation',
-      text: `I made a hidden pattern for you. Invite code: ${invite.inviteCode}`,
+      title,
+      text: invite.shareUrl ? `${text}\n${invite.shareUrl}` : text,
       data: JSON.stringify({ type: 'pattern-invite', inviteId: invite.inviteId }),
     });
     this.status = 'Invite link ready. Waiting for opponent to accept.';

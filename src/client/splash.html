@@ -78,6 +78,44 @@
           </ol>
         </section>
       </div>
+
+      <div
+        class="dialog-backdrop invite-dialog"
+        id="invite-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="invite-title"
+        aria-describedby="invite-message invite-guidance"
+        hidden
+      >
+        <section class="invite-panel">
+          <span class="invite-kicker">1V1 Challenge</span>
+          <h2 id="invite-title">Versus Invitation</h2>
+          <p class="invite-message" id="invite-message">
+            A rival challenged you to a battle.
+          </p>
+          <p class="invite-guidance" id="invite-guidance">
+            Accept, choose your 6-tile pattern, and fight for the win.
+          </p>
+          <p class="invite-status" id="invite-status" aria-live="polite"></p>
+          <div class="invite-actions">
+            <button
+              class="invite-action invite-accept"
+              id="invite-accept"
+              type="button"
+            >
+              Accept
+            </button>
+            <button
+              class="invite-action invite-decline"
+              id="invite-decline"
+              type="button"
+            >
+              Decline
+            </button>
+          </div>
+        </section>
+      </div>
     </main>
     <script type="module" src="splash.ts" defer></script>
   </body>

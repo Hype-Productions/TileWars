@@ -10,6 +10,13 @@ import {
 } from '../shared/game';
 import { todayUtcDate } from '../shared/pattern';
 import type { PlayerProgressSummary } from '../shared/progression';
+import type { VersusInviteSummary } from '../shared/versus';
+import { getVersusInvite } from './versusClient';
+import {
+  clearVersusInviteIntent,
+  readVersusShareData,
+  rememberVersusInviteIntent,
+} from './versusShare';
 
 const dailyButton = document.getElementById('daily-button');
 const versusButton = document.getElementById('versus-button');
@@ -21,6 +28,13 @@ const subredditUrl = 'https://www.reddit.com/r/TileFinder/';
 const versusKicker = versusButton?.querySelector('.button-kicker');
 const dailyNumber = document.getElementById('daily-number');
 const dailyStreak = document.getElementById('daily-streak');
+const inviteDialog = document.getElementById('invite-dialog');
+const inviteMessage = document.getElementById('invite-message');
+const inviteGuidance = document.getElementById('invite-guidance');
+const inviteStatus = document.getElementById('invite-status');
+const inviteAccept = document.getElementById('invite-accept');
+const inviteDecline = document.getElementById('invite-decline');
+let splashInviteId: string | null = null;
 
 const tileColors = [
   'tile-cream',
@@ -75,6 +89,22 @@ if (versusButton instanceof HTMLButtonElement) {
   });
 }
 
+if (inviteAccept instanceof HTMLButtonElement) {
+  inviteAccept.addEventListener('click', (event) => {
+    if (!splashInviteId || inviteAccept.disabled) {
+      return;
+    }
+    rememberVersusInviteIntent(splashInviteId);
+    inviteAccept.textContent = 'Opening...';
+    inviteAccept.disabled = true;
+    openExpandedGame(event, 'versus');
+  });
+}
+
+if (inviteDecline instanceof HTMLButtonElement) {
+  inviteDecline.addEventListener('click', () => closeInviteDialog());
+}
+
 if (leaderboardClose instanceof HTMLButtonElement) {
   leaderboardClose.addEventListener('click', () => closeLeaderboard());
 }
@@ -89,6 +119,10 @@ if (leaderboardDialog instanceof HTMLElement) {
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
+    if (inviteDialog instanceof HTMLElement && !inviteDialog.hidden) {
+      closeInviteDialog();
+      return;
+    }
     closeLeaderboard();
   }
 });
@@ -136,6 +170,7 @@ if (interactiveBoard instanceof HTMLElement) {
 
 void loadSplashProgress();
 renderDailyNumber();
+showSharedInvite();
 
 document.querySelectorAll('.letter-tile').forEach((tile) => {
   tile.addEventListener('pointerdown', () => {
@@ -393,6 +428,83 @@ function closeLeaderboard(): void {
   getLeaderboardButton()?.setAttribute('aria-expanded', 'false');
 
   getLeaderboardButton()?.focus();
+}
+
+function showSharedInvite(): void {
+  const shared = readVersusShareData();
+  if (!shared || !(inviteDialog instanceof HTMLElement)) {
+    return;
+  }
+  splashInviteId = shared.inviteId;
+  inviteDialog.hidden = false;
+  if (inviteAccept instanceof HTMLButtonElement) {
+    inviteAccept.disabled = false;
+    inviteAccept.textContent = 'Accept';
+    inviteAccept.focus();
+  }
+  void loadInvitePreview(shared.inviteId);
+}
+
+async function loadInvitePreview(inviteId: string): Promise<void> {
+  try {
+    const response = await getVersusInvite(inviteId);
+    if (splashInviteId !== inviteId) {
+      return;
+    }
+    renderInvitePreview(response.invite);
+  } catch {
+    if (splashInviteId === inviteId && inviteStatus instanceof HTMLElement) {
+      inviteStatus.textContent = 'We’ll verify this challenge when you open it.';
+    }
+  }
+}
+
+function renderInvitePreview(invite: VersusInviteSummary): void {
+  if (inviteMessage instanceof HTMLElement) {
+    inviteMessage.textContent = `${invite.creatorDisplayName} challenged you to a battle.`;
+  }
+  if (!(inviteAccept instanceof HTMLButtonElement)) {
+    return;
+  }
+  const canOpen =
+    invite.status === 'open' ||
+    (invite.role === 'acceptor' &&
+      (invite.status === 'accepted-awaiting-pattern' || invite.status === 'matched'));
+  inviteAccept.disabled = !canOpen;
+  inviteAccept.textContent = invite.status === 'open' ? 'Accept' : 'Continue';
+
+  if (invite.role === 'creator') {
+    setInviteUnavailable(
+      'This is your invitation. Send it to a rival and let the battle begin.'
+    );
+  } else if (!canOpen) {
+    setInviteUnavailable('This invitation is no longer available.');
+  }
+}
+
+function setInviteUnavailable(message: string): void {
+  if (inviteGuidance instanceof HTMLElement) {
+    inviteGuidance.textContent = message;
+  }
+  if (inviteStatus instanceof HTMLElement) {
+    inviteStatus.textContent = '';
+  }
+  if (inviteDecline instanceof HTMLButtonElement) {
+    inviteDecline.textContent = 'Close';
+  }
+}
+
+function closeInviteDialog(): void {
+  if (!(inviteDialog instanceof HTMLElement)) {
+    return;
+  }
+  inviteDialog.hidden = true;
+  splashInviteId = null;
+  clearVersusInviteIntent();
+  if (inviteDecline instanceof HTMLButtonElement) {
+    inviteDecline.textContent = 'Decline';
+  }
+  versusButton?.focus();
 }
 
 function pulseTitleLetter(): void {

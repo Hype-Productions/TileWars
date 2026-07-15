@@ -126,7 +126,9 @@ export class PatternGame extends Scene {
     this.markerQueue.reset();
     const sharedInviteId: unknown = this.registry.get('sharedInviteId');
     if (typeof sharedInviteId === 'string') {
-      this.scene.start('VersusLobby', { inviteId: sharedInviteId });
+      const acceptInvite = this.registry.get('acceptSharedInvite') === true;
+      this.registry.remove('acceptSharedInvite');
+      this.scene.start('VersusLobby', { inviteId: sharedInviteId, acceptInvite });
       return;
     }
     const startMode: unknown = this.registry.get('startMode');

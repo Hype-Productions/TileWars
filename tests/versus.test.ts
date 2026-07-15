@@ -7,6 +7,7 @@ import {
 import { parsePatternInput } from '../src/shared/pattern';
 import {
   compareVersusScores,
+  buildVersusInviteShareUrl,
   organizeVersusLobby,
   parseVersusShareData,
   parseVersusShareUrl,
@@ -153,6 +154,44 @@ describe('versus rules', () => {
     expect(parseVersusShareUrl(iosUrl)?.inviteId).toBe(
       '900c39cd-6d82-4c92-86e6-790d628c0ea0'
     );
+  });
+
+  it('builds a canonical invitation URL that round-trips its share data', () => {
+    const url = buildVersusInviteShareUrl('t3_post-1', 'invite-1');
+    expect(url).toContain('/r/_/comments/post-1');
+    expect(parseVersusShareUrl(url)).toEqual({
+      type: 'pattern-invite',
+      inviteId: 'invite-1',
+    });
+  });
+
+  it('parses Devvit invitation envelopes from Android and desktop hash URLs', () => {
+    const userData = JSON.stringify({
+      type: 'pattern-invite',
+      inviteId: 'hash-invite',
+    });
+    const envelope = encodeURIComponent(JSON.stringify({ userData }));
+
+    expect(
+      parseVersusShareUrl(`https://reddit.com/post#devvitshare=${envelope}`)
+    ).toEqual({ type: 'pattern-invite', inviteId: 'hash-invite' });
+    expect(
+      parseVersusShareUrl(
+        `https://reddit.com/post#/comments/abc?foo=1&devvitshare=${envelope}`
+      )
+    ).toEqual({ type: 'pattern-invite', inviteId: 'hash-invite' });
+  });
+
+  it('parses encoded share data while rejecting empty invitation ids', () => {
+    const encoded = encodeURIComponent(
+      JSON.stringify({ type: 'pattern-invite', inviteId: 'encoded-invite' })
+    );
+    expect(parseVersusShareData(encoded)?.inviteId).toBe('encoded-invite');
+    expect(
+      parseVersusShareData(
+        JSON.stringify({ type: 'pattern-invite', inviteId: '   ' })
+      )
+    ).toBeNull();
   });
 
   it('keeps an invitation and its permanent result in their requested groups', () => {

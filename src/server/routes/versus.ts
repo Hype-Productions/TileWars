@@ -1,4 +1,4 @@
-import { context } from '@devvit/web/server';
+import { context, reddit } from '@devvit/web/server';
 import { Hono, type Context } from 'hono';
 import type {
   VersusGuessRequest,
@@ -7,6 +7,7 @@ import type {
   VersusPatternRequest,
 } from '../../shared/api';
 import type { Coord } from '../../shared/pattern';
+import { buildVersusInviteShareUrl } from '../../shared/versus';
 import {
   closeVersusRound,
   acceptRematchRequest,
@@ -96,8 +97,22 @@ versusApi.post('/round/close', async (c) => {
 versusApi.post('/invites', async (c) => {
   try {
     const request: unknown = await c.req.json<VersusPatternRequest>();
+    const postId = context.postId;
     return c.json(
-      await createVersusInvite(currentUser(), patternFromRequest(request))
+      await createVersusInvite(
+        currentUser(),
+        patternFromRequest(request),
+        postId
+          ? async (inviteId) => {
+              const canonicalUrl = buildVersusInviteShareUrl(postId, inviteId);
+              try {
+                return await reddit.createShareUrl(canonicalUrl);
+              } catch {
+                return canonicalUrl;
+              }
+            }
+          : undefined
+      )
     );
   } catch (error) {
     return versusError(c, error);

@@ -4,7 +4,10 @@ import { PatternGame } from './scenes/PatternGame';
 import { VersusGame } from './scenes/VersusGame';
 import { VersusLobby } from './scenes/VersusLobby';
 import { VersusResult } from './scenes/VersusResult';
-import { readVersusShareData } from './versusShare';
+import {
+  consumeVersusInviteIntent,
+  readVersusShareData,
+} from './versusShare';
 
 //  Find out more information about the Game Config at:
 //  https://docs.phaser.io/api-documentation/typedef/types-core#gameconfig
@@ -27,7 +30,8 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 const StartGame = (parent: string) => {
-  const shared = readVersusShareData();
+  const inviteIntent = consumeVersusInviteIntent();
+  const shared = inviteIntent ?? readVersusShareData();
   const startMode =
     document.body.dataset.startMode === 'versus' ? 'versus' : 'daily';
   return new Game({
@@ -37,6 +41,9 @@ const StartGame = (parent: string) => {
       preBoot: (game) => {
         if (shared) {
           game.registry.set('sharedInviteId', shared.inviteId);
+        }
+        if (inviteIntent?.action === 'accept') {
+          game.registry.set('acceptSharedInvite', true);
         }
         game.registry.set('startMode', startMode);
       },

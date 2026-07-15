@@ -95,6 +95,7 @@ type VersusMatchRecord = {
 type VersusInviteRecord = {
   inviteId: string;
   inviteCode: string;
+  shareUrl: string | null;
   creator: VersusUser;
   pattern: Coord[];
   status:
@@ -705,7 +706,8 @@ export const submitRematchResponsePattern = async (
 
 export const createVersusInvite = async (
   user: VersusUser,
-  pattern: Coord[]
+  pattern: Coord[],
+  createShareUrl?: (inviteId: string) => Promise<string>
 ): Promise<VersusInviteResponse> => {
   const validation = validateVersusPattern(pattern);
   if (!validation.valid) {
@@ -713,10 +715,12 @@ export const createVersusInvite = async (
   }
   const now = Date.now();
   const inviteId = randomUUID();
+  const shareUrl = createShareUrl ? await createShareUrl(inviteId) : null;
   const inviteCode = await createInviteCode(inviteId, now + VERSUS_MATCH_DURATION_MS);
   const invite: VersusInviteRecord = {
     inviteId,
     inviteCode,
+    shareUrl,
     creator: user,
     pattern,
     status: 'open',
@@ -1673,6 +1677,7 @@ const summarizeInvite = (
 ): VersusInviteSummary => ({
   inviteId: invite.inviteId,
   inviteCode: invite.inviteCode,
+  shareUrl: invite.shareUrl,
   creatorDisplayName: invite.creator.displayName,
   acceptedByDisplayName: invite.acceptedBy?.displayName ?? null,
   createdAt: invite.createdAt,
@@ -1795,6 +1800,7 @@ const parseInvite = (value: string | undefined): VersusInviteRecord | null => {
   return {
     ...invite,
     inviteCode: typeof parsed.inviteCode === 'string' ? parsed.inviteCode : '',
+    shareUrl: typeof parsed.shareUrl === 'string' ? parsed.shareUrl : null,
     status:
       parsed.status === 'accepted' && parsed.matchId
         ? 'matched'

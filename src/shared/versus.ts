@@ -82,6 +82,7 @@ export type VersusMatchSummary = {
 export type VersusInviteSummary = {
   inviteId: string;
   inviteCode: string;
+  shareUrl: string | null;
   creatorDisplayName: string;
   acceptedByDisplayName: string | null;
   createdAt: number;
@@ -154,6 +155,25 @@ export type VersusRematchResponse = {
 export type VersusShareData = {
   type: 'pattern-invite';
   inviteId: string;
+};
+
+export const buildVersusInviteShareUrl = (
+  postId: string,
+  inviteId: string
+): string => {
+  const postWithoutPrefix = postId.replace(/^t3_/, '');
+  const userData: VersusShareData = { type: 'pattern-invite', inviteId };
+  const envelope = {
+    hash: '',
+    params: {},
+    path: '',
+    userData: JSON.stringify(userData),
+  };
+  const url = new URL(
+    `https://reddit.com/r/_/comments/${encodeURIComponent(postWithoutPrefix)}`
+  );
+  url.searchParams.set('devvitshare', JSON.stringify(envelope));
+  return url.toString();
 };
 
 export type VersusLobbySections = {
@@ -260,22 +280,29 @@ export const parseVersusShareData = (
   if (!raw) {
     return null;
   }
-  try {
-    const value: unknown = JSON.parse(raw);
-    if (
-      typeof value !== 'object' ||
-      value === null ||
-      !('type' in value) ||
-      !('inviteId' in value) ||
-      value.type !== 'pattern-invite' ||
-      typeof value.inviteId !== 'string'
-    ) {
-      return null;
+  for (const candidate of decodedShareCandidates(raw)) {
+    try {
+      const value: unknown = JSON.parse(candidate);
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        !('type' in value) ||
+        !('inviteId' in value) ||
+        value.type !== 'pattern-invite' ||
+        typeof value.inviteId !== 'string'
+      ) {
+        continue;
+      }
+      const inviteId = value.inviteId.trim();
+      if (inviteId.length === 0 || inviteId.length > 200) {
+        continue;
+      }
+      return { type: 'pattern-invite', inviteId };
+    } catch {
+      continue;
     }
-    return { type: 'pattern-invite', inviteId: value.inviteId };
-  } catch {
-    return null;
   }
+  return null;
 };
 
 export const parseVersusShareUrl = (
@@ -285,23 +312,60 @@ export const parseVersusShareUrl = (
     return null;
   }
   try {
-    const envelopeValue = new URL(value).searchParams.get('devvitshare');
-    if (!envelopeValue) {
-      return null;
+    const url = new URL(value, 'https://reddit.invalid');
+    const envelopeValues = [...url.searchParams.getAll('devvitshare')];
+    const hash = url.hash.slice(1);
+    for (const hashCandidate of decodedShareCandidates(hash)) {
+      const queryStart = hashCandidate.indexOf('?');
+      const params = new URLSearchParams(
+        queryStart >= 0 ? hashCandidate.slice(queryStart + 1) : hashCandidate
+      );
+      envelopeValues.push(...params.getAll('devvitshare'));
     }
-    const envelope: unknown = JSON.parse(envelopeValue);
-    if (
-      typeof envelope !== 'object' ||
-      envelope === null ||
-      !('userData' in envelope) ||
-      typeof envelope.userData !== 'string'
-    ) {
-      return null;
+
+    for (const envelopeValue of envelopeValues) {
+      for (const candidate of decodedShareCandidates(envelopeValue)) {
+        try {
+          const envelope: unknown = JSON.parse(candidate);
+          if (
+            typeof envelope !== 'object' ||
+            envelope === null ||
+            !('userData' in envelope) ||
+            typeof envelope.userData !== 'string'
+          ) {
+            continue;
+          }
+          const share = parseVersusShareData(envelope.userData);
+          if (share) {
+            return share;
+          }
+        } catch {
+          continue;
+        }
+      }
     }
-    return parseVersusShareData(envelope.userData);
+    return null;
   } catch {
     return null;
   }
+};
+
+const decodedShareCandidates = (value: string): string[] => {
+  const candidates = [value];
+  let current = value;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const decoded = decodeURIComponent(current);
+      if (decoded === current || candidates.includes(decoded)) {
+        break;
+      }
+      candidates.push(decoded);
+      current = decoded;
+    } catch {
+      break;
+    }
+  }
+  return candidates;
 };
 
 export const organizeVersusLobby = (
