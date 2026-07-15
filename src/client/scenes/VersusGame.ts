@@ -310,8 +310,7 @@ export class VersusGame extends Scene {
         graphics.lineStyle(3, COLORS.orange, 0.85);
         graphics.strokeRoundedRect(tileX, tileY, size, size, radius);
       } else if (guess?.clue.green) {
-        graphics.fillStyle(COLORS.green, 1);
-        graphics.fillRoundedRect(tileX, tileY, size, size, radius);
+        this.drawCluePattern(graphics, tileX, tileY, size, radius, guess.clue);
       } else if (guess) {
         this.drawCluePattern(graphics, tileX, tileY, size, radius, guess.clue);
       } else {
@@ -628,21 +627,62 @@ export class VersusGame extends Scene {
     if (clue.red > 0) colors.push('red');
     if (clue.blue > 0) colors.push('blue');
     if (clue.orange > 0) colors.push('orange');
+    const clueColors = colors.map((color) => COLORS[color]);
 
-    if (colors.length === 0) {
+    if (clue.green) {
+      graphics.fillStyle(COLORS.green, 1);
+      graphics.fillRoundedRect(x, y, size, size, radius);
+
+      if (clueColors.length > 0) {
+        const insetSize = size * 0.42;
+        const insetX = x + (size - insetSize) / 2;
+        const insetY = y + (size - insetSize) / 2;
+        const insetRadius = Math.max(3, radius * 0.45);
+        graphics.fillStyle(COLORS.line, 0.9);
+        graphics.fillRoundedRect(
+          insetX - 2,
+          insetY - 2,
+          insetSize + 4,
+          insetSize + 4,
+          insetRadius + 2
+        );
+        this.drawClueSegments(
+          graphics,
+          insetX,
+          insetY,
+          insetSize,
+          insetRadius,
+          clueColors
+        );
+      }
+      return;
+    }
+
+    if (clueColors.length === 0) {
       graphics.fillStyle(COLORS.paper, 1);
       graphics.fillRoundedRect(x, y, size, size, radius);
       return;
     }
 
-    graphics.fillStyle(COLORS[colors[0] ?? 'red'], 1);
+    this.drawClueSegments(graphics, x, y, size, radius, clueColors);
+  }
+
+  private drawClueSegments(
+    graphics: GameObjects.Graphics,
+    x: number,
+    y: number,
+    size: number,
+    radius: number,
+    clueColors: number[]
+  ): void {
+    graphics.fillStyle(clueColors[0] ?? COLORS.red, 1);
     graphics.fillRoundedRect(x, y, size, size, radius);
-    const segmentSize = size / colors.length;
-    for (let index = 1; index < colors.length; index += 1) {
+    const segmentSize = size / clueColors.length;
+    for (let index = 1; index < clueColors.length; index += 1) {
       const segmentX = x + segmentSize * index;
       const remainingWidth = size - segmentSize * index;
-      graphics.fillStyle(COLORS[colors[index] ?? 'red'], 1);
-      if (index === colors.length - 1) {
+      graphics.fillStyle(clueColors[index] ?? COLORS.red, 1);
+      if (index === clueColors.length - 1) {
         graphics.fillRoundedRect(segmentX, y, remainingWidth, size, radius);
         graphics.fillRect(segmentX, y, Math.min(radius, remainingWidth), size);
       } else {

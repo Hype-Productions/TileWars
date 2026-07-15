@@ -1400,8 +1400,7 @@ export class PatternGame extends Scene {
       graphics.lineStyle(3, COLORS.orange, 0.85);
       graphics.strokeRoundedRect(tileX, tileY, size, size, radius);
     } else if (guess?.clue.green) {
-      graphics.fillStyle(COLORS.green, 1);
-      graphics.fillRoundedRect(tileX, tileY, size, size, radius);
+      this.drawCluePattern(graphics, tileX, tileY, size, radius, guess.clue);
     } else if (guess) {
       graphics.fillStyle(COLORS.paper, 1);
       graphics.fillRoundedRect(tileX, tileY, size, size, radius);
@@ -1501,26 +1500,55 @@ export class PatternGame extends Scene {
     radius: number,
     clue: StoredGuess['clue']
   ): void {
+    const colorNames = this.clueColorNames(clue);
+    const clueColors = colorNames.map((color) => COLORS[color]);
+
     if (clue.green) {
       graphics.fillStyle(COLORS.green, 1);
       graphics.fillRoundedRect(x, y, size, size, radius);
+
+      if (clueColors.length > 0) {
+        const insetSize = size * 0.42;
+        const insetX = x + (size - insetSize) / 2;
+        const insetY = y + (size - insetSize) / 2;
+        const insetRadius = Math.max(3, radius * 0.45);
+        graphics.fillStyle(COLORS.line, 0.9);
+        graphics.fillRoundedRect(
+          insetX - 2,
+          insetY - 2,
+          insetSize + 4,
+          insetSize + 4,
+          insetRadius + 2
+        );
+        this.drawClueSegments(
+          graphics,
+          insetX,
+          insetY,
+          insetSize,
+          insetRadius,
+          clueColors
+        );
+      }
       return;
     }
 
-    const hasRed = clue.red > 0;
-    const hasBlue = clue.blue > 0;
-    const hasOrange = clue.orange > 0;
-    const clueCount = Number(hasRed) + Number(hasBlue) + Number(hasOrange);
-
-    if (clueCount === 0) {
+    if (clueColors.length === 0) {
       graphics.fillStyle(COLORS.paper, 1);
       graphics.fillRoundedRect(x, y, size, size, radius);
       return;
     }
 
-    const colorNames = this.clueColorNames(clue);
-    const clueColors = colorNames.map((color) => COLORS[color]);
+    this.drawClueSegments(graphics, x, y, size, radius, clueColors);
+  }
 
+  private drawClueSegments(
+    graphics: GameObjects.Graphics,
+    x: number,
+    y: number,
+    size: number,
+    radius: number,
+    clueColors: number[]
+  ): void {
     graphics.fillStyle(clueColors[0] ?? COLORS.paper, 1);
     graphics.fillRoundedRect(x, y, size, size, radius);
 
