@@ -78,7 +78,7 @@ type LobbySceneData = {
   acceptInvite?: boolean;
   historyReturn?: {
     opponent: RivalryOpponentSummary;
-    page: number;
+    scrollOffset: number;
   };
 };
 
@@ -116,7 +116,15 @@ export class VersusLobby extends Scene {
   private allOpponents: RivalryOpponentSummary[] = [];
   private selectedOpponent: RivalryOpponentSummary | null = null;
   private opponentHistory: RivalryHistoryEntry[] = [];
-  private historyPage = 0;
+  private historyScrollOffset = 0;
+  private historyScrollMax = 0;
+  private historyListTop = 0;
+  private historyListBottom = 0;
+  private historyListContainer: GameObjects.Container | null = null;
+  private historyMaskGraphics: GameObjects.Graphics | null = null;
+  private historyScrollbarThumb: GameObjects.Rectangle | null = null;
+  private historyScrollbarTravel = 0;
+  private historyPointerDragged = false;
   private pendingHistoryReturn: LobbySceneData['historyReturn'] = undefined;
   private sceneShell: TileWarsSceneShell | null = null;
   private contentHeight = 768;
@@ -150,7 +158,8 @@ export class VersusLobby extends Scene {
     this.allOpponents = [];
     this.selectedOpponent = null;
     this.opponentHistory = [];
-    this.historyPage = 0;
+    this.historyScrollOffset = 0;
+    this.historyScrollMax = 0;
     this.pendingHistoryReturn = data.historyReturn;
   }
 
@@ -181,7 +190,7 @@ export class VersusLobby extends Scene {
     if (this.pendingHistoryReturn) {
       const target = this.pendingHistoryReturn;
       this.pendingHistoryReturn = undefined;
-      await this.openOpponentHistory(target.opponent, target.page);
+      await this.openOpponentHistory(target.opponent, target.scrollOffset);
       return;
     }
     const inviteId = this.pendingInviteId;
@@ -203,20 +212,33 @@ export class VersusLobby extends Scene {
     this.codeInput?.removeEventListener('keydown', this.handleCodeInputKey);
     this.hideCodeInput();
     this.codeInput = null;
+    this.historyMaskGraphics?.destroy();
+    this.historyMaskGraphics = null;
     this.pollEvent?.destroy();
     this.pollEvent = null;
   }
 
   private handleWheel(
-    _pointer: Input.Pointer,
+    pointer: Input.Pointer,
     _objects: GameObjects.GameObject[],
     _deltaX: number,
     deltaY: number
   ): void {
+    if (this.selectedOpponent) {
+      if (this.pointerIsInsideHistoryList(pointer)) {
+        this.setHistoryScroll(this.historyScrollOffset + deltaY * 0.7);
+      }
+      return;
+    }
     this.setScroll(this.cameras.main.scrollY + deltaY * 0.7);
   }
 
   private handlePointerDown(pointer: Input.Pointer): void {
+    if (this.selectedOpponent) {
+      this.dragPointerY = this.pointerIsInsideHistoryList(pointer) ? pointer.y : null;
+      this.historyPointerDragged = false;
+      return;
+    }
     this.dragPointerY = pointer.y;
   }
 
@@ -226,7 +248,12 @@ export class VersusLobby extends Scene {
     }
     const delta = this.dragPointerY - pointer.y;
     if (Math.abs(delta) > 2) {
-      this.setScroll(this.cameras.main.scrollY + delta);
+      if (this.selectedOpponent) {
+        this.historyPointerDragged = true;
+        this.setHistoryScroll(this.historyScrollOffset + delta);
+      } else {
+        this.setScroll(this.cameras.main.scrollY + delta);
+      }
       this.dragPointerY = pointer.y;
     }
   }
@@ -240,14 +267,35 @@ export class VersusLobby extends Scene {
     this.cameras.main.scrollY = PhaserMath.Clamp(value, 0, max);
   }
 
+  private pointerIsInsideHistoryList(pointer: Input.Pointer): boolean {
+    return pointer.y >= this.historyListTop && pointer.y <= this.historyListBottom;
+  }
+
+  private setHistoryScroll(value: number): void {
+    this.historyScrollOffset = PhaserMath.Clamp(value, 0, this.historyScrollMax);
+    this.historyListContainer?.setY(this.historyListTop - this.historyScrollOffset);
+    if (this.historyScrollbarThumb) {
+      const progress = this.historyScrollMax > 0
+        ? this.historyScrollOffset / this.historyScrollMax
+        : 0;
+      this.historyScrollbarThumb.y = this.historyListTop + progress * this.historyScrollbarTravel;
+    }
+  }
+
   private render(): void {
     this.hideCodeInput();
+    this.historyMaskGraphics?.destroy();
+    this.historyMaskGraphics = null;
+    this.historyListContainer = null;
+    this.historyScrollbarThumb = null;
     clearSceneContent(this, this.sceneShell);
     const width = this.scale.width;
     const mobile = width < 700;
     this.sceneShell = ensureTileWarsSceneShell(this, this.sceneShell, {
       width,
-      height: Math.max(this.scale.height, this.contentHeight),
+      height: this.selectedOpponent
+        ? this.scale.height
+        : Math.max(this.scale.height, this.contentHeight),
       headingY: this.lobby ? 34 : 46,
       mobile,
     });
@@ -356,7 +404,7 @@ export class VersusLobby extends Scene {
       y = this.drawLookingSection(y);
     }
     y = this.drawMatchSection('Active Matches', COLORS.playable, sections.activeMatches, y);
-    y = this.drawPendingSection('Invitations', COLORS.action, sections.invitations, y);
+    y = this.drawPendingSection('Invitations', COLORS.orange, sections.invitations, y);
     y = this.drawOpponentResultsSection(this.lobby.recentOpponents, y);
     this.add
       .text(width / 2, y + 10, this.status, {
@@ -399,15 +447,14 @@ export class VersusLobby extends Scene {
     }
     y = this.drawSectionHeader(title, color, y);
     for (const match of matches) {
-      this.drawMatchCard(match, color, y);
-      y += 106;
+      y += this.drawMatchCard(match, color, y) + 14;
     }
     return y + 8;
   }
 
   private drawLookingSection(y: number): number {
     const mobile = this.scale.width < 500;
-    const height = mobile ? 116 : 88;
+    const height = mobile ? 126 : 88;
     this.drawCardPanel(COLORS.looking, y, height);
     this.add
       .text(30, y + 22, 'Searching for an opponent', this.cardTitleStyle())
@@ -415,17 +462,17 @@ export class VersusLobby extends Scene {
     this.add
       .text(
         30,
-        y + (mobile ? 59 : 54),
-        'Your 6-tile pattern is waiting for a challenger. When a match is ready, return and play on your own time.',
+        y + (mobile ? 54 : 54),
+        'Your pattern is ready. Return when a match is found.',
         {
           ...this.cardBodyStyle(),
-          wordWrap: { width: this.scale.width - (mobile ? 138 : 170) },
+          wordWrap: { width: this.scale.width - (mobile ? 60 : 170) },
         }
       )
       .setOrigin(0, 0.5);
     this.createButton(
-      this.scale.width - 66,
-      y + height / 2,
+      this.scale.width - (mobile ? 76 : 66),
+      mobile ? y + 101 : y + height / 2,
       'Cancel',
       () => void this.closeRound(),
       'decline',
@@ -442,41 +489,51 @@ export class VersusLobby extends Scene {
       return y;
     }
     y = this.drawSectionHeader('Results', COLORS.results, y);
-    this.drawSearchIcon(this.scale.width - 76, y - 20);
+    this.drawSearchIcon(this.scale.width - 34, y - 20);
     for (const opponent of opponents.slice(0, 3)) {
       this.drawOpponentCard(opponent, y);
-      y += 98;
+      y += 108;
     }
     return y + 8;
   }
 
   private drawSearchIcon(x: number, y: number): void {
-    drawTileButton(this, {
-      x,
-      y,
-      label: 'Search History',
-      variant: 'blue',
-      width: 132,
-      height: 30,
-      fontSize: 11,
-      onClick: () => void this.openOpponentSearch(),
-    });
+    const graphics = this.add.graphics();
+    graphics.lineStyle(3, COLORS.results, 1);
+    graphics.strokeCircle(x - 4, y - 3, 8);
+    graphics.lineBetween(x + 2, y + 3, x + 10, y + 11);
+    this.add
+      .zone(x - 20, y - 20, 40, 40)
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerup', () => void this.openOpponentSearch());
   }
 
   private drawOpponentCard(opponent: RivalryOpponentSummary, y: number): void {
     const width = this.scale.width;
-    this.drawCardPanel(COLORS.results, y, 84);
+    const actionWidth = width < 430 ? 100 : 112;
+    const rematchX = width - 76;
+    this.drawCardPanel(COLORS.results, y, 94);
     this.add
       .text(30, y + 21, opponent.opponentDisplayName, this.cardTitleStyle())
       .setOrigin(0, 0.5);
     drawPlainRivalryRecord(this, width - 76, y + 21, opponent, 13);
-    this.add.text(30, y + 56, 'History', this.cardBodyStyle()).setOrigin(0, 0.5);
-    this.drawOutcomeDots(94, y + 56, opponent.recentOutcomes);
+    this.drawOutcomeDots(38, y + 66, opponent.recentOutcomes);
     this.add
-      .zone(14, y, width - 28, 84)
+      .zone(14, y, width - 28, 94)
       .setOrigin(0)
       .setInteractive({ useHandCursor: true })
       .on('pointerup', () => void this.openOpponentHistory(opponent));
+    drawTileButton(this, {
+      x: rematchX,
+      y: y + 66,
+      label: 'Rematch',
+      variant: 'orange',
+      width: actionWidth,
+      height: 34,
+      fontSize: 11,
+      onClick: () => this.openOpponentRematch(opponent),
+    });
   }
 
   private drawOutcomeDots(x: number, y: number, outcomes: RivalryOutcome[]): void {
@@ -497,9 +554,17 @@ export class VersusLobby extends Scene {
     return y + 34;
   }
 
-  private drawMatchCard(match: VersusMatchSummary, color: number, y: number): void {
+  private drawMatchCard(match: VersusMatchSummary, color: number, y: number): number {
     const width = this.scale.width;
-    this.drawCardPanel(color, y, 92);
+    const mobile = width < 500;
+    const label =
+      match.myAttemptStatus === 'playing'
+        ? 'Continue'
+        : match.myAttemptStatus === 'not-started'
+          ? 'Play'
+          : null;
+    const cardHeight = mobile && label ? 118 : 92;
+    this.drawCardPanel(color, y, cardHeight);
     this.add
       .text(30, y + 20, `vs ${match.opponentDisplayName}`, this.cardTitleStyle())
       .setOrigin(0, 0.5);
@@ -507,35 +572,30 @@ export class VersusLobby extends Scene {
     this.add
       .text(30, y + 49, `${this.sourceLabel(match.source)} · ${this.matchStatus(match)}`, {
         ...this.cardBodyStyle(),
-        wordWrap: { width: Math.max(180, width - 190) },
+        wordWrap: { width: mobile && label ? width - 60 : Math.max(180, width - 190) },
       })
       .setOrigin(0, 0.5);
-    const label =
-      match.myAttemptStatus === 'playing'
-        ? 'Continue'
-        : match.myAttemptStatus === 'not-started'
-          ? 'Play'
-          : null;
     if (label) {
-      this.createButton(width - 72, y + 67, label, () => {
+      this.createButton(width - 72, mobile ? y + 91 : y + 67, label, () => {
         this.scene.start('VersusGame', { matchId: match.matchId });
       });
     }
+    return cardHeight;
   }
 
   private drawPendingCard(item: VersusPendingItem, color: number, y: number): number {
     if (item.kind === 'invite') {
       return this.drawInviteCard(item.invite, color, y);
     }
-    this.drawRematchCard(item.rematch, color, y);
-    return 92;
+    return this.drawRematchCard(item.rematch, color, y);
   }
 
   private drawInviteCard(invite: VersusInviteSummary, color: number, y: number): number {
     const width = this.scale.width;
     const openCreator = invite.role === 'creator' && invite.status === 'open';
     const mobileActions = openCreator && width < 500;
-    const cardHeight = mobileActions ? 150 : openCreator || invite.role === 'acceptor' ? 118 : 92;
+    const mobile = width < 500;
+    const cardHeight = openCreator || invite.role === 'acceptor' ? 118 : 92;
     this.drawCardPanel(color, y, cardHeight);
     const title = invite.role === 'creator'
       ? 'Open invitation'
@@ -554,19 +614,43 @@ export class VersusLobby extends Scene {
       })
       .setOrigin(0, 0.5);
     if (invite.role === 'acceptor') {
-      this.createButton(width / 2 - 70, y + 91, 'Choose Pattern', () => {
+      const actionWidth = mobile ? (width - 44) / 2 : undefined;
+      const actionGap = 8;
+      const firstX = mobile && actionWidth
+        ? 18 + actionWidth / 2
+        : width / 2 - 70;
+      const secondX = mobile && actionWidth
+        ? firstX + actionWidth + actionGap
+        : width / 2 + 70;
+      this.createButton(firstX, y + 91, 'Choose Pattern', () => {
         this.pickerMode = 'invite-answer';
         this.pickerInviteId = invite.inviteId;
         this.selectedKeys.clear();
         this.render();
-      });
-      this.createButton(width / 2 + 70, y + 91, 'Release', () => void this.releaseInvite(invite.inviteId), 'decline');
+      }, 'accept', actionWidth);
+      this.createButton(secondX, y + 91, 'Release', () => void this.releaseInvite(invite.inviteId), 'decline', actionWidth);
     } else if (invite.status === 'open') {
       if (mobileActions) {
-        const actionWidth = (width - 42) / 2;
-        this.createButton(18 + actionWidth / 2, y + 91, 'Share Again', () => void this.shareInvite(invite), 'blue', actionWidth);
-        this.createButton(24 + actionWidth * 1.5, y + 91, 'Copy Code', () => void this.copyInviteCode(invite.inviteCode), 'neutral', actionWidth);
-        this.createButton(width / 2, y + 132, 'Cancel', () => void this.cancelInvite(invite.inviteId), 'decline', actionWidth);
+        const gap = 6;
+        const sideMargin = 26;
+        const actionWidth = (width - sideMargin * 2 - gap * 2) / 3;
+        const actionX = (index: number): number =>
+          sideMargin + actionWidth / 2 + index * (actionWidth + gap);
+        drawTileButton(this, {
+          x: actionX(0), y: y + 91, label: 'Share', variant: 'blue',
+          width: actionWidth, height: 34, fontSize: 12,
+          onClick: () => void this.shareInvite(invite),
+        });
+        drawTileButton(this, {
+          x: actionX(1), y: y + 91, label: 'Copy Code', variant: 'dark',
+          width: actionWidth, height: 34, fontSize: 12,
+          onClick: () => void this.copyInviteCode(invite.inviteCode),
+        });
+        drawTileButton(this, {
+          x: actionX(2), y: y + 91, label: 'Cancel', variant: 'red',
+          width: actionWidth, height: 34, fontSize: 12,
+          onClick: () => void this.cancelInvite(invite.inviteId),
+        });
       } else {
         const actionWidth = Math.min(116, (width - 42) / 3);
         const start = width / 2 - actionWidth - 4;
@@ -578,9 +662,13 @@ export class VersusLobby extends Scene {
     return cardHeight;
   }
 
-  private drawRematchCard(rematch: VersusRematchSummary, color: number, y: number): void {
+  private drawRematchCard(rematch: VersusRematchSummary, color: number, y: number): number {
     const width = this.scale.width;
-    this.drawCardPanel(color, y, 92);
+    const mobile = width < 500;
+    const hasActions = rematch.role === 'responder' || rematch.status === 'pending';
+    const cardHeight = mobile && hasActions ? 118 : 92;
+    const actionsY = mobile ? y + 91 : y + 68;
+    this.drawCardPanel(color, y, cardHeight);
     this.add
       .text(
         30,
@@ -601,17 +689,26 @@ export class VersusLobby extends Scene {
           : `${rematch.opponentDisplayName} invited you to play again.`;
     this.add.text(30, y + 48, body, this.cardBodyStyle()).setOrigin(0, 0.5);
     if (rematch.role === 'responder') {
+      const actionWidth = mobile ? (width - 44) / 2 : undefined;
+      const actionGap = 8;
+      const firstX = mobile && actionWidth
+        ? 18 + actionWidth / 2
+        : width / 2 - 70;
+      const secondX = mobile && actionWidth
+        ? firstX + actionWidth + actionGap
+        : width / 2 + 70;
       if (rematch.status === 'pending') {
-        this.createButton(width / 2 - 70, y + 68, 'Accept', () => void this.acceptRematch(rematch), 'accept');
+        this.createButton(firstX, actionsY, 'Accept', () => void this.acceptRematch(rematch), 'accept', actionWidth);
       } else {
-        this.createButton(width / 2 - 70, y + 68, 'Choose Pattern', () => {
+        this.createButton(firstX, actionsY, 'Choose Pattern', () => {
           this.openRematchAnswerPicker(rematch);
-        }, 'accept');
+        }, 'accept', actionWidth);
       }
-      this.createButton(width / 2 + 70, y + 68, 'Decline', () => void this.updateRematch(rematch, 'decline'), 'decline');
+      this.createButton(secondX, actionsY, 'Decline', () => void this.updateRematch(rematch, 'decline'), 'decline', actionWidth);
     } else if (rematch.status === 'pending') {
-      this.createButton(width - 72, y + 68, 'Cancel', () => void this.updateRematch(rematch, 'cancel'));
+      this.createButton(mobile ? 76 : width - 72, actionsY, 'Cancel', () => void this.updateRematch(rematch, 'cancel'), 'decline', 92);
     }
+    return cardHeight;
   }
 
   private drawCardPanel(color: number, y: number, height: number): void {
@@ -814,76 +911,111 @@ export class VersusLobby extends Scene {
       return;
     }
     const width = this.scale.width;
+    const height = this.scale.height;
     drawRaisedPanel(this, 14, 68, width - 28, 112, COLORS.results);
-    this.createButton(62, 89, 'Back', () => {
-      this.selectedOpponent = null;
-      this.opponentHistory = [];
-      this.historyPage = 0;
-      this.cameras.main.scrollY = 0;
-      this.render();
-    }, 'orange', 82);
     this.add
-      .text(width / 2, 89, opponent.opponentDisplayName, {
+      .text(width / 2, 88, opponent.opponentDisplayName, {
         ...this.modalTitleStyle(),
-        fontSize: width < 430 ? '18px' : '22px',
-        wordWrap: { width: Math.max(130, width - 210) },
+        fontSize: width < 430 ? '20px' : '23px',
+        wordWrap: { width: width - 56 },
         align: 'center',
       })
       .setOrigin(0.5);
     drawPlainRivalryRecord(this, width / 2, 119, opponent, 14);
     this.drawOutcomeDots(width / 2 - 40, 149, opponent.recentOutcomes);
-    let y = this.drawSectionHeader('Matches', COLORS.results, 194);
-    const pageSize = Math.max(3, Math.min(7, Math.floor((this.scale.height - 280) / 64)));
-    const pageCount = Math.max(1, Math.ceil(this.opponentHistory.length / pageSize));
-    this.historyPage = Math.min(this.historyPage, pageCount - 1);
-    const entries = this.opponentHistory.slice(
-      this.historyPage * pageSize,
-      (this.historyPage + 1) * pageSize
+
+    const listTop = this.drawSectionHeader('Matches', COLORS.results, 194);
+    const backY = height - 30;
+    const statusSpace = this.status ? 22 : 0;
+    const listBottom = Math.max(listTop + 56, backY - 30 - statusSpace);
+    const viewportHeight = Math.max(1, listBottom - listTop);
+    const contentHeight = this.opponentHistory.length > 0
+      ? this.opponentHistory.length * 64 - 8
+      : 56;
+    this.historyListTop = listTop;
+    this.historyListBottom = listBottom;
+    this.historyScrollMax = Math.max(0, contentHeight - viewportHeight);
+    this.historyScrollOffset = PhaserMath.Clamp(
+      this.historyScrollOffset,
+      0,
+      this.historyScrollMax
     );
-    entries.forEach((entry, index) => {
-      const rowY = y + index * 64;
-      this.drawHistoryRow(14, rowY, width - 28, entry);
+
+    const list = this.add.container(0, listTop - this.historyScrollOffset);
+    this.historyListContainer = list;
+    const rowWidth = width - (this.historyScrollMax > 0 ? 40 : 28);
+    this.opponentHistory.forEach((entry, index) => {
+      this.drawHistoryRow(list, 14, index * 64, rowWidth, entry);
     });
-    if (entries.length === 0) {
+    if (this.opponentHistory.length === 0) {
+      list.add(
+        this.add
+          .text(
+            width / 2,
+            28,
+            'No match history is available yet.',
+            this.modalBodyStyle(width - 40)
+          )
+          .setOrigin(0.5)
+      );
+    }
+
+    const maskGraphics = this.make.graphics({}, false);
+    maskGraphics.fillStyle(0xffffff, 1);
+    maskGraphics.fillRect(0, listTop, width, viewportHeight);
+    list.setMask(maskGraphics.createGeometryMask());
+    this.historyMaskGraphics = maskGraphics;
+
+    if (this.historyScrollMax > 0) {
+      const trackX = width - 19;
       this.add
-        .text(width / 2, y + 34, 'No match history is available yet.', this.modalBodyStyle(width - 40))
+        .rectangle(trackX, listTop, 4, viewportHeight, COLORS.line, 0.12)
+        .setOrigin(0.5, 0);
+      const thumbHeight = Math.max(
+        30,
+        viewportHeight * (viewportHeight / contentHeight)
+      );
+      this.historyScrollbarTravel = viewportHeight - thumbHeight;
+      this.historyScrollbarThumb = this.add
+        .rectangle(trackX, listTop, 4, thumbHeight, COLORS.blue, 0.9)
+        .setOrigin(0.5, 0);
+      this.setHistoryScroll(this.historyScrollOffset);
+    } else {
+      this.historyScrollbarTravel = 0;
+    }
+
+    if (this.status) {
+      this.add
+        .text(width / 2, backY - 34, this.status, {
+          ...this.cardBodyStyle(),
+          align: 'center',
+          wordWrap: { width: width - 30 },
+        })
         .setOrigin(0.5);
     }
-    y += Math.max(1, entries.length) * 64 + 18;
-    const controlsY = y;
-    if (this.historyPage > 0) {
-      this.createButton(width / 2 - 80, controlsY, 'Newer', () => {
-        this.historyPage -= 1;
-        this.cameras.main.scrollY = 0;
-        this.render();
-      }, 'blue', 112);
-    }
-    if (this.historyPage + 1 < pageCount) {
-      this.createButton(width / 2 + 80, controlsY, 'Older', () => {
-        this.historyPage += 1;
-        this.cameras.main.scrollY = 0;
-        this.render();
-      }, 'blue', 112);
-    }
-    this.add
-      .text(width / 2, controlsY + 33, this.status, {
-        ...this.cardBodyStyle(),
-        align: 'center',
-        wordWrap: { width: width - 30 },
-      })
-      .setOrigin(0.5, 0);
-    this.contentHeight = Math.max(this.scale.height, controlsY + 82);
-    this.cameras.main.setBounds(0, 0, width, this.contentHeight);
-    this.setScroll(this.cameras.main.scrollY);
+    this.createButton(width / 2, backY, 'Back', () => {
+      this.selectedOpponent = null;
+      this.opponentHistory = [];
+      this.historyScrollOffset = 0;
+      this.historyScrollMax = 0;
+      this.cameras.main.scrollY = 0;
+      this.status = '';
+      this.render();
+    }, 'orange', 118);
+    this.contentHeight = height;
+    this.cameras.main.setBounds(0, 0, width, height);
+    this.cameras.main.scrollY = 0;
   }
 
   private drawHistoryRow(
+    container: GameObjects.Container,
     x: number,
     y: number,
     width: number,
     entry: RivalryHistoryEntry
   ): void {
     const graphics = this.add.graphics();
+    container.add(graphics);
     graphics.fillStyle(COLORS.paper, 0.92);
     graphics.fillRoundedRect(x, y, width, 56, 7);
     const outcomeColor =
@@ -892,36 +1024,58 @@ export class VersusLobby extends Scene {
         : entry.outcome === 'loss'
           ? COLORS.red
           : COLORS.orange;
-    const color = entry.outcome === 'win' ? '#218c4a' : entry.outcome === 'loss' ? '#c83d3d' : '#a66b00';
     graphics.lineStyle(3, outcomeColor, 0.9);
     graphics.strokeRoundedRect(x, y, width, 56, 7);
     graphics.fillStyle(outcomeColor, 1);
     graphics.fillRoundedRect(x + 8, y + 13, 30, 30, 6);
-    this.add
-      .text(x + 23, y + 28, entry.outcome.charAt(0).toUpperCase(), {
+    container.add(
+      this.add.text(x + 23, y + 28, entry.outcome.charAt(0).toUpperCase(), {
         fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', color: '#ffffff',
-      })
-      .setOrigin(0.5);
-    this.add
-      .text(x + width - 12, y + 17, new Date(entry.completedAt).toLocaleDateString(), this.cardBodyStyle())
+      }).setOrigin(0.5)
+    );
+    const dateLabel = this.add
+      .text(
+        x + width - 12,
+        y + 28,
+        new Date(entry.completedAt).toLocaleDateString(),
+        {
+          ...this.cardTitleStyle(),
+          fontSize: this.scale.width < 430 ? '10px' : '12px',
+          color: '#18212b',
+        }
+      )
       .setOrigin(1, 0.5);
-    this.add
-      .text(x + 48, y + 38, this.historyScoreText(entry), {
-        ...this.cardBodyStyle(),
-        color,
-        wordWrap: { width: width - 66 },
+    container.add(dateLabel);
+    const scoreLabel = this.add
+      .text(x + 48, y + 28, this.historyScoreText(entry), {
+        ...this.cardTitleStyle(),
+        fontSize: this.scale.width < 430 ? '11px' : '13px',
+        color: '#18212b',
       })
       .setOrigin(0, 0.5);
-    this.add
-      .zone(x, y, width, 56)
+    const scoreWidth = Math.max(100, width - 72 - dateLabel.width);
+    if (scoreLabel.width > scoreWidth) {
+      const fontSize = Number.parseInt(String(scoreLabel.style.fontSize), 10);
+      scoreLabel.setFontSize(
+        Math.max(9, Math.floor(fontSize * scoreWidth / scoreLabel.width))
+      );
+    }
+    container.add(scoreLabel);
+    const zone = this.add.zone(x, y, width, 56)
       .setOrigin(0)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => graphics.setAlpha(0.72))
       .on('pointerout', () => graphics.setAlpha(1))
-      .on('pointerup', () => {
+      .on('pointerup', (pointer: Input.Pointer) => {
         graphics.setAlpha(1);
-        void this.openHistoryResult(entry);
+        if (
+          !this.historyPointerDragged &&
+          this.pointerIsInsideHistoryList(pointer)
+        ) {
+          void this.openHistoryResult(entry);
+        }
       });
+    container.add(zone);
   }
 
   private drawRewardModal(): void {
@@ -1313,7 +1467,7 @@ export class VersusLobby extends Scene {
 
   private async openOpponentHistory(
     opponent: RivalryOpponentSummary,
-    page = 0
+    scrollOffset = 0
   ): Promise<void> {
     if (this.loading) {
       return;
@@ -1323,11 +1477,10 @@ export class VersusLobby extends Scene {
       const response = await getVersusRivalryHistory(opponent.opponentUserId);
       this.selectedOpponent = response.opponent;
       this.opponentHistory = response.history;
-      const pageSize = Math.max(3, Math.min(7, Math.floor((this.scale.height - 280) / 64)));
-      const pageCount = Math.max(1, Math.ceil(response.history.length / pageSize));
-      this.historyPage = PhaserMath.Clamp(page, 0, pageCount - 1);
+      this.historyScrollOffset = Math.max(0, scrollOffset);
       this.opponentSearchVisible = false;
       this.cameras.main.scrollY = 0;
+      this.status = '';
     } catch (error) {
       this.status = clientErrorMessage(error);
     } finally {
@@ -1340,20 +1493,23 @@ export class VersusLobby extends Scene {
     if (this.loading || !this.selectedOpponent) {
       return;
     }
+    const returnScrollOffset = this.historyScrollOffset;
     this.loading = true;
     this.status = 'Loading match details...';
     this.render();
     try {
       const response = await getVersusResult(entry.matchId);
-      this.scene.start('VersusResult', {
+      this.status = '';
+      this.render();
+      this.scene.launch('VersusResult', {
         match: response.match,
-        ...(this.lobby?.progress ? { progress: this.lobby.progress } : {}),
         completedAt: entry.completedAt,
         historyReturn: {
           opponent: this.selectedOpponent,
-          page: this.historyPage,
+          scrollOffset: returnScrollOffset,
         },
       });
+      this.scene.sleep();
       return;
     } catch {
       this.status = 'Detailed replay is no longer available.';
@@ -1363,6 +1519,11 @@ export class VersusLobby extends Scene {
         this.render();
       }
     }
+  }
+
+  private openOpponentRematch(opponent: RivalryOpponentSummary): void {
+    this.pickerMatchId = opponent.latestMatchId;
+    this.openPicker('rematch-request');
   }
 
   private filteredOpponents(): RivalryOpponentSummary[] {
@@ -1376,12 +1537,12 @@ export class VersusLobby extends Scene {
 
   private historyScoreText(entry: RivalryHistoryEntry): string {
     const mine = entry.myScore
-      ? `${entry.myScore.guesses}g ${formatDuration(entry.myScore.durationMs)}`
-      : '—';
+      ? `${entry.myScore.guesses} guesses · ${formatDuration(entry.myScore.durationMs)}`
+      : 'not finished';
     const theirs = entry.opponentScore
-      ? `${entry.opponentScore.guesses}g ${formatDuration(entry.opponentScore.durationMs)}`
-      : '—';
-    return `You ${mine} / Them ${theirs}`;
+      ? `${entry.opponentScore.guesses} guesses · ${formatDuration(entry.opponentScore.durationMs)}`
+      : 'not finished';
+    return `${mine} | ${theirs}`;
   }
 
   private async acceptRematch(rematch: VersusRematchSummary): Promise<void> {

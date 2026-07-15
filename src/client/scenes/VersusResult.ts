@@ -5,15 +5,7 @@ import type {
   VersusReplayGuess,
   VersusScore,
 } from '../../shared/versus';
-import {
-  buildXpAnimationSegments,
-  createInitialProgress,
-  summarizeProgress,
-  type PlayerProgressSummary,
-  type ProgressReward,
-  type RivalryOpponentSummary,
-} from '../../shared/progression';
-import { acknowledgeRewards } from '../versusClient';
+import type { RivalryOpponentSummary } from '../../shared/progression';
 import {
   TILE_WARS_COLORS,
   clearSceneContent,
@@ -26,23 +18,18 @@ import {
 
 type ResultSceneData = {
   match: VersusMatchSummary;
-  progress?: PlayerProgressSummary;
-  reward?: ProgressReward;
   completedAt?: number;
   historyReturn?: {
     opponent: RivalryOpponentSummary;
-    page: number;
+    scrollOffset: number;
   };
 };
 type ColorName = 'red' | 'blue' | 'orange';
-type ButtonVariant = 'dark' | 'green' | 'orange';
+type ButtonVariant = 'dark' | 'orange';
 const COLORS = TILE_WARS_COLORS;
 
 export class VersusResult extends Scene {
   private match: VersusMatchSummary | null = null;
-  private progress: PlayerProgressSummary | null = null;
-  private reward: ProgressReward | null = null;
-  private rewardAnimated = false;
   private sceneShell: TileWarsSceneShell | null = null;
   private completedAt: number | null = null;
   private historyReturn: ResultSceneData['historyReturn'] = undefined;
@@ -53,9 +40,6 @@ export class VersusResult extends Scene {
 
   init(data: ResultSceneData): void {
     this.match = data.match;
-    this.progress = data.progress ?? null;
-    this.reward = data.reward ?? null;
-    this.rewardAnimated = false;
     this.completedAt = data.completedAt ?? null;
     this.historyReturn = data.historyReturn;
   }
@@ -113,11 +97,14 @@ export class VersusResult extends Scene {
     const rivalryY = (mobile ? 91 : 102) + detailShift;
     drawPlainRivalryRecord(this, width / 2, rivalryY, this.match.rivalry, 14);
 
-    const panelWidth = mobile ? Math.min(width - 30, 390) : Math.min(360, width * 0.4);
-    const panelHeight = mobile
-      ? Math.max(142, Math.min(300, (height - 225) / 2))
-      : Math.max(160, Math.min(326, height - 220));
     const firstY = (mobile ? 111 : height < 600 ? 116 : 120) + detailShift;
+    const panelWidth = mobile ? Math.min(width - 30, 390) : Math.min(360, width * 0.4);
+    const mobilePanelGap = 24;
+    const buttonsY = height - (mobile ? 25 : 32);
+    const mobilePanelSpace = buttonsY - 28 - firstY - mobilePanelGap;
+    const panelHeight = mobile
+      ? Math.min(300, Math.max(96, mobilePanelSpace / 2))
+      : Math.max(160, Math.min(326, height - 220));
     const myX = mobile ? width / 2 : width / 2 - panelWidth / 2 - 15;
     const opponentX = mobile ? width / 2 : width / 2 + panelWidth / 2 + 15;
     this.drawPlayerPanel(
@@ -133,7 +120,7 @@ export class VersusResult extends Scene {
 
     this.drawPlayerPanel(
       opponentX,
-      mobile ? firstY + panelHeight + 8 : firstY,
+      mobile ? firstY + panelHeight + mobilePanelGap : firstY,
       panelWidth,
       panelHeight,
       this.match.opponentDisplayName,
@@ -142,132 +129,22 @@ export class VersusResult extends Scene {
       this.match.outcome === 'loss'
     );
 
-    const progressY = mobile
-      ? firstY + panelHeight * 2 + 18
-      : firstY + panelHeight + (height < 600 ? 8 : 32);
-    if (this.progress) {
-      this.drawProgressBar(progressY);
-    } else {
-      this.add
-        .text(width / 2, progressY, `+${this.match.xpEarned} XP earned`, {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '16px',
-          color: this.match.xpEarned > 0 ? '#16a66a' : '#6b7280',
-        })
-        .setOrigin(0.5);
-    }
-
-    const buttonsY = height - (mobile ? 25 : 32);
     this.createButton(
-      width / 2 - 92,
+      width / 2,
       buttonsY,
-      this.historyReturn ? 'History' : 'Lobby',
-      () => this.scene.start('VersusLobby', this.historyReturn
-        ? { historyReturn: this.historyReturn }
-        : {}),
+      'Back',
+      () => this.goBack(),
       'orange'
-    );
-    this.createButton(
-      width / 2 + 92,
-      buttonsY,
-      'Rematch',
-      () =>
-        this.scene.start('VersusLobby', {
-          rematchMatchId: this.match?.matchId,
-        }),
-      'green'
     );
   }
 
-  private drawProgressBar(y: number): void {
-    if (!this.progress) {
+  private goBack(): void {
+    if (this.historyReturn) {
+      this.scene.wake('VersusLobby');
+      this.scene.stop();
       return;
     }
-    const width = Math.min(this.scale.width - 48, 360);
-    const x = (this.scale.width - width) / 2;
-    const reward = this.reward;
-    const initial = reward && !this.rewardAnimated
-      ? summarizeProgress({
-          ...createInitialProgress(),
-          totalXp: reward.previousTotalXp,
-        })
-      : this.progress;
-    const levelLabel = this.add
-      .text(this.scale.width / 2, y, `Level ${initial.level}`, {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: '13px',
-        color: '#25313b',
-      })
-      .setOrigin(0.5);
-    const xpLabel = this.add
-      .text(
-        this.scale.width / 2,
-        y + 17,
-        `${initial.levelXp}/${initial.xpForNextLevel} XP · +${reward?.amount ?? this.match?.xpEarned ?? 0} XP earned`,
-        {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '10px',
-          color: '#33404c',
-        }
-      )
-      .setOrigin(0.5);
-    const graphics = this.add.graphics();
-    graphics.fillStyle(0xd8d0c5, 1);
-    graphics.fillRoundedRect(x, y + 29, width, 11, 6);
-    graphics.lineStyle(1, COLORS.line, 0.28);
-    graphics.strokeRoundedRect(x, y + 29, width, 11, 6);
-    const fill = this.add
-      .rectangle(x, y + 34.5, width, 9, COLORS.green)
-      .setOrigin(0, 0.5)
-      .setScale(initial.levelXp / initial.xpForNextLevel, 1);
-
-    if (!reward || this.rewardAnimated) {
-      return;
-    }
-    const segments = buildXpAnimationSegments(
-      reward.previousTotalXp,
-      reward.newTotalXp
-    );
-    const animateSegment = (index: number): void => {
-      const segment = segments[index];
-      if (!segment) {
-        levelLabel.setText(`Level ${this.progress?.level ?? 1}`);
-        if (this.progress) {
-          xpLabel.setText(
-            `${this.progress.levelXp}/${this.progress.xpForNextLevel} XP · +${reward.amount} XP earned`
-          );
-        }
-        this.rewardAnimated = true;
-        void acknowledgeRewards([reward.rewardId]).catch(() => undefined);
-        return;
-      }
-      levelLabel.setText(`Level ${segment.level}`);
-      fill.setScale(segment.fromXp / segment.xpForNextLevel, 1);
-      this.tweens.add({
-        targets: fill,
-        scaleX: segment.toXp / segment.xpForNextLevel,
-        duration: 650,
-        ease: 'Sine.easeOut',
-        onUpdate: () => {
-          xpLabel.setText(
-            `${Math.round(segment.xpForNextLevel * fill.scaleX)}/${segment.xpForNextLevel} XP · +${reward.amount} XP earned`
-          );
-        },
-        onComplete: () => {
-          if (segment.completesLevel) {
-            this.tweens.add({
-              targets: levelLabel,
-              scaleX: 1.12,
-              scaleY: 1.12,
-              yoyo: true,
-              duration: 150,
-            });
-          }
-          animateSegment(index + 1);
-        },
-      });
-    };
-    animateSegment(0);
+    this.scene.start('VersusLobby');
   }
 
   private drawPlayerPanel(

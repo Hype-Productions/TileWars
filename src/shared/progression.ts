@@ -68,6 +68,7 @@ export type RivalryHistoryEntry = {
 export type RivalryOpponentSummary = RivalrySummary & {
   opponentUserId: string;
   opponentDisplayName: string;
+  latestMatchId: string;
   lastPlayedAt: number;
   recentOutcomes: RivalryOutcome[];
 };

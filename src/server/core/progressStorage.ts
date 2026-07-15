@@ -333,18 +333,24 @@ const loadRivalryOpponentSummary = async (
     4,
     { by: 'rank', reverse: true }
   );
-  const recentOutcomes: RivalryOutcome[] = [];
-  for (const member of recentMembers.reverse()) {
+  const recentHistory = recentMembers.flatMap((member) => {
     const stored = parseStoredHistory(member.member);
-    if (stored) {
-      recentOutcomes.push(outcomeForUser(stored, userId));
-    }
+    return stored ? [stored] : [];
+  });
+  const latestMatch = recentHistory[0];
+  if (!latestMatch) {
+    return null;
+  }
+  const recentOutcomes: RivalryOutcome[] = [];
+  for (const stored of [...recentHistory].reverse()) {
+    recentOutcomes.push(outcomeForUser(stored, userId));
   }
   return {
     opponentUserId,
     opponentDisplayName: currentIsA
       ? record.displayNameB
       : record.displayNameA,
+    latestMatchId: latestMatch.matchId,
     wins: currentIsA ? record.winsA : record.winsB,
     losses: currentIsA ? record.winsB : record.winsA,
     draws: record.draws,

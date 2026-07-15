@@ -9,9 +9,7 @@ import {
   coordKey,
 } from '../../shared/pattern';
 import type { VersusMatchSummary } from '../../shared/versus';
-import type { PlayerProgressSummary, ProgressReward } from '../../shared/progression';
 import {
-  getProgress,
   getVersusSession,
   postVersusSession,
   VersusClientError,
@@ -64,8 +62,6 @@ export class VersusGame extends Scene {
   private clientNowAtSync = 0;
   private clockEvent: Time.TimerEvent | null = null;
   private sceneShell: TileWarsSceneShell | null = null;
-  private progress: PlayerProgressSummary | null = null;
-  private reward: ProgressReward | null = null;
 
   constructor() {
     super('VersusGame');
@@ -170,17 +166,6 @@ export class VersusGame extends Scene {
         resolution: TEXT_RESOLUTION,
       })
       .setOrigin(0.5);
-    this.add
-      .text(width - 16, shortLandscape ? 24 : 34, '', {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: mobile ? '13px' : '15px',
-        color: '#ffffff',
-        backgroundColor: '#ffb12d',
-        padding: { left: 8, right: 8, top: 6, bottom: 6 },
-        resolution: TEXT_RESOLUTION,
-      })
-      .setName('versus-clock')
-      .setOrigin(1, 0.5);
     const statY = shortLandscape ? 82 : 103;
     drawPlainRivalryRecord(
       this,
@@ -193,6 +178,22 @@ export class VersusGame extends Scene {
     this.layoutBoard(mobile, shortLandscape);
     this.createTiles();
     this.drawStatsHud(mobile, shortLandscape);
+    this.add
+      .text(
+        width / 2,
+        this.boardY + this.boardSize + (shortLandscape ? 11 : 15),
+        '',
+        {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: mobile ? '13px' : '15px',
+          color: '#ffffff',
+          backgroundColor: '#ffb12d',
+          padding: { left: 8, right: 8, top: 5, bottom: 5 },
+          resolution: TEXT_RESOLUTION,
+        }
+      )
+      .setName('versus-clock')
+      .setOrigin(0.5);
 
     const buttonY = shortLandscape ? height - 24 : mobile ? height - 30 : height - 42;
     this.createButton(
@@ -247,7 +248,7 @@ export class VersusGame extends Scene {
     const height = this.scale.height;
     if (shortLandscape) {
       this.boardSize = snapBoardSize(
-        Math.max(150, Math.min(width - 30, height - 225, 260))
+        Math.max(150, Math.min(width - 30, height - 250, 260))
       );
       this.boardX = Math.round((width - this.boardSize) / 2);
       this.boardY = 145;
@@ -496,21 +497,8 @@ export class VersusGame extends Scene {
     if (!this.match) {
       return;
     }
-    try {
-      const response = await getProgress();
-      this.progress = response.progress;
-      this.reward =
-        response.pendingRewards.find(
-          (reward) => reward.rewardId === `versus:${this.matchId}`
-        ) ?? null;
-    } catch {
-      this.progress = null;
-      this.reward = null;
-    }
     this.scene.start('VersusResult', {
       match: this.match,
-      ...(this.progress ? { progress: this.progress } : {}),
-      ...(this.reward ? { reward: this.reward } : {}),
     });
   }
 
