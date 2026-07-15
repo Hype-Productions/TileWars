@@ -289,9 +289,12 @@
 }
 
 .board-action-icon {
+  width: clamp(1.86rem, 4.2vw, 2.34rem);
+  height: clamp(1.86rem, 4.2vw, 2.34rem);
   font-size: clamp(1.86rem, 4.2vw, 2.34rem);
   font-weight: 950;
   line-height: 1;
+  object-fit: contain;
   filter: drop-shadow(1px 2px 0 rgba(20, 33, 48, 0.22));
 }
 
@@ -305,11 +308,7 @@
 
 .leaderboard-action .board-action-icon {
   display: block;
-  width: 1em;
-  height: 1em;
-  line-height: 1em;
   text-align: center;
-  transform: translateX(-0.07em);
 }
 
 .letter-tile.title-pop {
@@ -866,6 +865,8 @@
   }
 
   .board-action-icon {
+    width: 1.72rem;
+    height: 1.72rem;
     font-size: 1.72rem;
   }
 }

@@ -240,8 +240,10 @@ function boardActionFor(
 
 function createActionTile(action: BoardAction): HTMLButtonElement {
   const tile = document.createElement('button');
-  const icon = document.createElement('span');
   const isJoinAction = action === 'join';
+  const icon = isJoinAction
+    ? document.createElement('span')
+    : document.createElement('img');
 
   tile.type = 'button';
   tile.className = `board-tile board-action ${
@@ -260,7 +262,13 @@ function createActionTile(action: BoardAction): HTMLButtonElement {
 
   icon.className = 'board-action-icon';
   icon.setAttribute('aria-hidden', 'true');
-  icon.textContent = isJoinAction ? 'r/' : '\uD83C\uDFC6';
+  if (icon instanceof HTMLImageElement) {
+    icon.src = '/assets/trophy.svg';
+    icon.alt = '';
+    icon.decoding = 'async';
+  } else {
+    icon.textContent = 'r/';
+  }
 
   tile.append(icon);
   return tile;
