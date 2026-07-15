@@ -117,6 +117,13 @@ describe('results', () => {
       { kind: 'entry', entry: last, isPlayer: false },
     ]);
 
+    expect(selectLeaderboardDisplayRows(leaders, leaders[0] ?? null, fourth)).toEqual([
+      { kind: 'entry', entry: leaders[0], isPlayer: true },
+      { kind: 'entry', entry: leaders[1], isPlayer: false },
+      { kind: 'entry', entry: leaders[2], isPlayer: false },
+      { kind: 'entry', entry: fourth, isPlayer: false },
+    ]);
+
     const player = { rank: 12, displayName: 'me', guesses: 9, solvedAt: 12 };
     expect(selectLeaderboardDisplayRows(leaders, player, last).slice(-2)).toEqual([
       { kind: 'ellipsis' },

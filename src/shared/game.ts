@@ -259,11 +259,15 @@ export const selectLeaderboardDisplayRows = (
     }
     appendEntry(playerRank, true);
     if (lastPlayer && lastPlayer.rank > playerRank.rank) {
-      rows.push({ kind: 'ellipsis' });
+      if (lastPlayer.rank > playerRank.rank + 1) {
+        rows.push({ kind: 'ellipsis' });
+      }
       appendEntry(lastPlayer, false);
     }
   } else if (lastPlayer && lastPlayer.rank > 3) {
-    rows.push({ kind: 'ellipsis' });
+    if (lastPlayer.rank > 4) {
+      rows.push({ kind: 'ellipsis' });
+    }
     appendEntry(lastPlayer, false);
   }
 
