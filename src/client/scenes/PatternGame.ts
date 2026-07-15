@@ -99,6 +99,7 @@ export class PatternGame extends Scene {
   private session: PlayerSession | null = null;
   private leaderboard: LeaderboardEntry[] = [];
   private playerRank: LeaderboardEntry | null = null;
+  private lastPlayer: LeaderboardEntry | null = null;
   private tileViews: TileView[] = [];
   private interactiveObjects: GameObjects.GameObject[] = [];
   private markerMode = false;
@@ -266,6 +267,9 @@ export class PatternGame extends Scene {
     if (data.playerRank !== undefined) {
       this.playerRank = data.playerRank;
     }
+    if (data.lastPlayer !== undefined) {
+      this.lastPlayer = data.lastPlayer;
+    }
     this.pattern = [];
     if (data.progress) {
       this.progress = data.progress;
@@ -290,7 +294,8 @@ export class PatternGame extends Scene {
         this.dailyReward =
           value.pendingRewards.find(
             (reward): reward is ProgressReward =>
-              isProgressReward(reward) && reward.rewardId === `daily:${date}`
+              isProgressReward(reward) &&
+              reward.rewardId === `daily:${date}`
           ) ?? null;
       }
     } catch {
@@ -584,7 +589,10 @@ export class PatternGame extends Scene {
       width - 24,
       shortLandscape ? 760 : mobile ? 380 : 460
     );
-    const modalHeight = Math.min(height - 24, 520);
+    const modalHeight = Math.min(
+      height - 24,
+      shortLandscape ? 520 : mobile ? 690 : 620
+    );
     const x = (width - modalWidth) / 2;
     const y = (height - modalHeight) / 2;
     const blocker = this.add
@@ -697,7 +705,7 @@ export class PatternGame extends Scene {
         .text(
           summaryCenter,
           y + 199,
-          `${displayedProgress.levelXp}/${displayedProgress.xpForNextLevel} XP + ${baseDailyXp} daily`,
+          `${displayedProgress.levelXp}/${displayedProgress.xpForNextLevel} XP + ${baseDailyXp} XP`,
           {
             fontFamily: 'Arial Black, Arial, sans-serif',
             fontSize: mobile ? '10px' : '11px',
@@ -707,7 +715,7 @@ export class PatternGame extends Scene {
         .setName('result-xp-label')
         .setOrigin(1, 0.5);
       this.add
-        .text(summaryCenter, y + 199, `+ ${streakBonusXp} streak`, {
+        .text(summaryCenter, y + 199, `+ ${streakBonusXp} XP`, {
           fontFamily: 'Arial Black, Arial, sans-serif',
           fontSize: mobile ? '10px' : '11px',
           color: '#d88416',
@@ -729,24 +737,48 @@ export class PatternGame extends Scene {
       shortLandscape ? modalWidth * 0.45 : modalWidth - 48
     );
 
+    this.add
+      .text(
+        summaryCenter,
+        y + modalHeight - 72,
+        'Comment your result to the subreddit game post!',
+        {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: mobile ? '10px' : '11px',
+          color: '#FF4500',
+          align: 'center',
+          wordWrap: { width: summaryWidth - 20 },
+          resolution: TEXT_RESOLUTION,
+        }
+      )
+      .setOrigin(0.5);
+
+    const resultButtonGap = 12;
+    const resultButtonWidth = Math.min(
+      144,
+      (summaryWidth - resultButtonGap) / 2
+    );
+    const resultButtonOffset = resultButtonWidth / 2 + resultButtonGap / 2;
     this.createButton(
-      summaryCenter - 76,
+      summaryCenter - resultButtonOffset,
       y + modalHeight - 34,
       'Back',
       () => {
         this.modal = 'none';
         this.renderScreen();
       },
-      'orange'
+      'orange',
+      resultButtonWidth
     );
     this.createButton(
-      summaryCenter + 76,
+      summaryCenter + resultButtonOffset,
       y + modalHeight - 34,
-      'Comment',
+      'Post Result',
       () => {
         void this.commentResult();
       },
-      'reddit'
+      'reddit',
+      resultButtonWidth
     );
   }
 
@@ -795,7 +827,8 @@ export class PatternGame extends Scene {
     const graphics = this.add.graphics();
     const rows = selectLeaderboardDisplayRows(
       this.leaderboard,
-      this.playerRank
+      this.playerRank,
+      this.lastPlayer
     );
 
     this.add
@@ -820,8 +853,8 @@ export class PatternGame extends Scene {
       return;
     }
 
-    rows.forEach((row, index) => {
-      const rowY = y + 38 + index * 40;
+    let rowY = y + 38;
+    rows.forEach((row) => {
       if (row.kind === 'ellipsis') {
         this.add
           .text(x + width / 2, rowY, '…', {
@@ -830,6 +863,7 @@ export class PatternGame extends Scene {
             color: '#667380',
           })
           .setOrigin(0.5);
+        rowY += 40;
         return;
       }
       const entry = row.entry;
@@ -900,6 +934,7 @@ export class PatternGame extends Scene {
           }
         )
         .setOrigin(1, 0.5);
+      rowY += 40;
     });
   }
 
@@ -939,7 +974,7 @@ export class PatternGame extends Scene {
     const streakBonusXp = Math.max(0, rewardAmount - baseDailyXp);
 
     if (streakXpLabel instanceof GameObjects.Text) {
-      streakXpLabel.setText(`+ ${streakBonusXp} streak`);
+      streakXpLabel.setText(`+ ${streakBonusXp} XP`);
     }
 
     if (!reward || this.acknowledgedRewardIds.has(reward.rewardId)) {
@@ -962,7 +997,7 @@ export class PatternGame extends Scene {
         }
         if (xpLabel instanceof GameObjects.Text && this.progress) {
           xpLabel.setText(
-            `${this.progress.levelXp}/${this.progress.xpForNextLevel} XP + ${baseDailyXp} daily`
+            `${this.progress.levelXp}/${this.progress.xpForNextLevel} XP + ${baseDailyXp} XP`
           );
           this.centerResultXpLabels(centerX);
         }
@@ -982,7 +1017,7 @@ export class PatternGame extends Scene {
           if (xpLabel instanceof GameObjects.Text) {
             const shownXp = Math.round(segment.xpForNextLevel * fill.scaleX);
             xpLabel.setText(
-              `${shownXp}/${segment.xpForNextLevel} XP + ${baseDailyXp} daily`
+              `${shownXp}/${segment.xpForNextLevel} XP + ${baseDailyXp} XP`
             );
             this.centerResultXpLabels(centerX);
           }
@@ -1047,13 +1082,15 @@ export class PatternGame extends Scene {
     y: number,
     label: string,
     onClick: (pointer: Input.Pointer) => void,
-    variant: ButtonVariant = 'dark'
+    variant: ButtonVariant = 'dark',
+    width?: number
   ): GameObjects.Container {
     const button = drawTileButton(this, {
       x,
       y,
       label,
       variant,
+      ...(width === undefined ? {} : { width }),
       fontSize: 14,
       onClick,
     });
@@ -1578,6 +1615,11 @@ const toDailySessionResponse = (
   }
   if (value.playerRank !== undefined) {
     response.playerRank = value.playerRank;
+  }
+  if (value.lastPlayer === null) {
+    response.lastPlayer = null;
+  } else if (isLeaderboardEntry(value.lastPlayer)) {
+    response.lastPlayer = value.lastPlayer;
   }
   if (isProgressSummary(value.progress)) {
     response.progress = value.progress;

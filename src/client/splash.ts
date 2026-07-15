@@ -608,7 +608,7 @@ async function loadDailyLeaderboard(): Promise<void> {
     if (!data) {
       throw new Error('Leaderboard response was invalid.');
     }
-    renderLeaderboard(data.leaderboard, data.playerRank);
+    renderLeaderboard(data.leaderboard, data.playerRank, data.lastPlayer ?? null);
   } catch {
     renderLeaderboardMessage('Daily leaderboard is unavailable right now.');
   }
@@ -616,13 +616,14 @@ async function loadDailyLeaderboard(): Promise<void> {
 
 function renderLeaderboard(
   leaderboard: LeaderboardEntry[],
-  playerRank: LeaderboardEntry | null
+  playerRank: LeaderboardEntry | null,
+  lastPlayer: LeaderboardEntry | null
 ): void {
   if (!(leaderboardList instanceof HTMLOListElement)) {
     return;
   }
 
-  const rows = selectLeaderboardDisplayRows(leaderboard, playerRank);
+  const rows = selectLeaderboardDisplayRows(leaderboard, playerRank, lastPlayer);
 
   leaderboardList.replaceChildren();
   if (rows.length === 0) {
@@ -735,7 +736,14 @@ function toDailyLeaderboardResponse(
     return null;
   }
 
-  return { type: 'daily-leaderboard', leaderboard, playerRank };
+  return {
+    type: 'daily-leaderboard',
+    leaderboard,
+    playerRank,
+    ...(isLeaderboardEntry(value.lastPlayer)
+      ? { lastPlayer: value.lastPlayer }
+      : {}),
+  };
 }
 
 function isLeaderboardEntry(value: unknown): value is LeaderboardEntry {

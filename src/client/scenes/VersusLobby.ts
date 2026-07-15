@@ -1933,9 +1933,17 @@ export class VersusLobby extends Scene {
       return;
     }
     this.loading = true;
-    let renderAfter = true;
+    const renderAfter = true;
     try {
       const response = await getVersusInviteByCode(this.inviteCode);
+      if (
+        response.invite.status !== 'open' &&
+        response.invite.status !== 'accepted-awaiting-pattern'
+      ) {
+        this.codeEntryError = 'This invitation is no longer available.';
+        this.status = '';
+        return;
+      }
       this.codeEntryVisible = false;
       this.codeEntryError = '';
       await this.openInvite(response.invite.inviteId);
@@ -1946,11 +1954,6 @@ export class VersusLobby extends Scene {
           ? 'That invitation code is invalid.'
           : message;
       this.status = '';
-      renderAfter = false;
-      const errorLabel = this.children.getByName('invite-code-error');
-      if (errorLabel instanceof GameObjects.Text) {
-        errorLabel.setText(this.codeEntryError);
-      }
     } finally {
       this.loading = false;
       if (renderAfter) {

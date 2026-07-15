@@ -1,6 +1,7 @@
 export const DAILY_BASE_XP = 150;
-export const DAILY_STREAK_XP_STEP = 15;
-export const DAILY_MAX_XP = 300;
+export const DAILY_STREAK_XP_STEP = 10;
+export const DAILY_MAX_STREAK_XP = 500;
+export const DAILY_MAX_XP = DAILY_BASE_XP + DAILY_MAX_STREAK_XP;
 export const VERSUS_WIN_XP = 100;
 export const VERSUS_DRAW_XP = 70;
 export const VERSUS_LOSS_XP = 40;
@@ -102,7 +103,7 @@ export const createInitialProgress = (): PlayerProgress => ({
 });
 
 export const xpRequiredForLevel = (level: number): number => {
-  return Math.min(1000, 300 + Math.max(0, level - 1) * 50);
+  return Math.min(3000, 300 + Math.max(0, level - 1) * 50);
 };
 
 export const summarizeProgress = (
@@ -124,9 +125,13 @@ export const summarizeProgress = (
 };
 
 export const dailyXpForStreak = (streak: number): number => {
+  const streakBonus = Math.min(
+    DAILY_MAX_STREAK_XP,
+    Math.max(0, streak - 1) * DAILY_STREAK_XP_STEP
+  );
   return Math.min(
     DAILY_MAX_XP,
-    DAILY_BASE_XP + Math.max(0, streak - 1) * DAILY_STREAK_XP_STEP
+    DAILY_BASE_XP + streakBonus
   );
 };
 

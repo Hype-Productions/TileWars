@@ -66,6 +66,7 @@ api.get('/daily/session', async (c) => {
     session,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    lastPlayer: leaderboard.lastPlayer,
     progress,
   });
 });
@@ -107,6 +108,7 @@ api.post('/daily/guess', async (c) => {
       session: nextSession,
       leaderboard: leaderboard.leaderboard,
       playerRank: leaderboard.playerRank,
+      lastPlayer: leaderboard.lastPlayer,
       progress: progressAward.progress,
       ...(progressAward.reward ? { reward: progressAward.reward } : {}),
     });
@@ -143,6 +145,7 @@ api.post('/daily/mark', async (c) => {
     session: nextSession,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    lastPlayer: leaderboard.lastPlayer,
     progress,
   });
 });
@@ -169,6 +172,7 @@ api.post('/daily/mode', async (c) => {
     session: nextSession,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    lastPlayer: leaderboard.lastPlayer,
     progress,
   });
 });
@@ -182,6 +186,7 @@ api.get('/daily/leaderboard', async (c) => {
     type: 'daily-leaderboard',
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    lastPlayer: leaderboard.lastPlayer,
   });
 });
 
@@ -235,6 +240,7 @@ api.post('/daily/dev-reset', async (c) => {
     session,
     leaderboard: leaderboard.leaderboard,
     playerRank: leaderboard.playerRank,
+    lastPlayer: leaderboard.lastPlayer,
     progress,
   });
 });

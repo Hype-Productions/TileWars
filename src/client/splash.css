@@ -681,7 +681,8 @@
 
 .leaderboard-list li.is-ellipsis {
   display: block;
-  min-height: 22px;
+  min-height: 16px;
+  margin: -3px 0;
   padding: 0;
   border: 0;
   background: transparent;

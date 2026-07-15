@@ -80,6 +80,7 @@ export type DailySessionResponse = {
   session: PlayerSession;
   leaderboard?: LeaderboardEntry[];
   playerRank?: LeaderboardEntry | null;
+  lastPlayer?: LeaderboardEntry | null;
   progress?: PlayerProgressSummary;
   reward?: ProgressReward;
 };
@@ -100,6 +101,7 @@ export type DailyLeaderboardResponse = {
   type: 'daily-leaderboard';
   leaderboard: LeaderboardEntry[];
   playerRank: LeaderboardEntry | null;
+  lastPlayer?: LeaderboardEntry | null;
 };
 
 export const DAILY_SEED = 'pattern';
@@ -235,7 +237,8 @@ export const leaderboardScore = (guesses: number, solvedAt: number): number => {
 
 export const selectLeaderboardDisplayRows = (
   leaderboard: LeaderboardEntry[],
-  playerRank: LeaderboardEntry | null
+  playerRank: LeaderboardEntry | null,
+  lastPlayer: LeaderboardEntry | null = null
 ): LeaderboardDisplayRow[] => {
   const leaders = leaderboard.slice(0, 3);
   const rows: LeaderboardDisplayRow[] = leaders.map((entry) => ({
@@ -244,9 +247,24 @@ export const selectLeaderboardDisplayRows = (
     isPlayer: playerRank?.rank === entry.rank,
   }));
 
-  if (playerRank && !leaders.some((entry) => entry.rank === playerRank.rank)) {
+  const appendEntry = (entry: LeaderboardEntry, isPlayer: boolean): void => {
+    if (!rows.some((row) => row.kind === 'entry' && row.entry.rank === entry.rank)) {
+      rows.push({ kind: 'entry', entry, isPlayer });
+    }
+  };
+
+  if (playerRank && playerRank.rank > 3) {
+    if (playerRank.rank >= 5) {
+      rows.push({ kind: 'ellipsis' });
+    }
+    appendEntry(playerRank, true);
+    if (lastPlayer && lastPlayer.rank > playerRank.rank) {
+      rows.push({ kind: 'ellipsis' });
+      appendEntry(lastPlayer, false);
+    }
+  } else if (lastPlayer && lastPlayer.rank > 3) {
     rows.push({ kind: 'ellipsis' });
-    rows.push({ kind: 'entry', entry: playerRank, isPlayer: true });
+    appendEntry(lastPlayer, false);
   }
 
   return rows;

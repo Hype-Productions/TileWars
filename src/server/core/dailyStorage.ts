@@ -85,6 +85,7 @@ export const loadDailyLeaderboard = async (
 ): Promise<{
   leaderboard: LeaderboardEntry[];
   playerRank: LeaderboardEntry | null;
+  lastPlayer: LeaderboardEntry | null;
 }> => {
   const leaderboardKey = storageKeys.dailyLeaderboard(date);
   const resultKey = storageKeys.dailyResults(date);
@@ -100,12 +101,23 @@ export const loadDailyLeaderboard = async (
     1,
     date
   );
+  const lastMembers = await redis.zRange(leaderboardKey, -1, -1, {
+    by: 'rank',
+  });
+  const lastEntries = await entriesForMembers(
+    resultKey,
+    lastMembers.map((member) => member.member),
+    Math.max(1, await redis.zCard(leaderboardKey)),
+    date
+  );
+  const lastPlayer = lastEntries.at(0) ?? null;
   const playerRankIndex = await redis.zRank(leaderboardKey, userId);
 
   if (playerRankIndex === undefined) {
     return {
       leaderboard,
       playerRank: null,
+      lastPlayer,
     };
   }
 
@@ -119,6 +131,7 @@ export const loadDailyLeaderboard = async (
   return {
     leaderboard,
     playerRank: playerEntries.at(0) ?? null,
+    lastPlayer,
   };
 };
 

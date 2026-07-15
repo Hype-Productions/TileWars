@@ -44,7 +44,6 @@ import {
 import { versusXpForResult } from '../../shared/progression';
 import {
   inviteAcceptanceDecision,
-  rematchCreationDecision,
   resolvedResultAccessDecision,
   responsePatternDecision,
 } from '../../shared/versusState';
@@ -141,8 +140,12 @@ export const versusStorageKeys = {
   userMatches: (userId: string): string => `versus:user:${userId}:matches`,
   unfinishedMatches: (userId: string): string =>
     `versus:user:${userId}:unfinished-matches`,
-  rematch: (sourceMatchId: string): string =>
-    `versus:rematch:${sourceMatchId}`,
+  rematch: (sourceMatchId: string, requestId?: string): string =>
+    requestId
+      ? `versus:rematch:${sourceMatchId}:${requestId}`
+      : `versus:rematch:${sourceMatchId}`,
+  rematchRequests: (sourceMatchId: string): string =>
+    `versus:rematch-requests:${sourceMatchId}`,
   invite: (inviteId: string): string => `versus:invite:${inviteId}`,
   inviteCode: (inviteCode: string): string =>
     `versus:invite-code:${inviteCode.toUpperCase()}`,
@@ -557,70 +560,25 @@ export const createRematchRequest = async (
     throw new VersusStorageError('Finish this match before sending another invitation.', 409);
   }
 
-  const rematchKey = versusStorageKeys.rematch(sourceMatchId);
   for (let attempt = 0; attempt < TRANSACTION_RETRIES; attempt += 1) {
-    const transaction = await redis.watch(rematchKey);
     const now = Date.now();
-    const loaded = await normalizeRematch(
-      parseRematch(await redis.get(rematchKey)),
-      now,
-      rematchKey
-    );
-    const decision = rematchCreationDecision(
-      loaded
-        ? { status: loaded.status, requesterUserId: loaded.requester.userId }
-        : null,
-      user.userId
-    );
-    if (decision === 'idempotent') {
-      await transaction.unwatch();
-      if (!loaded) {
-        continue;
-      }
-      return {
-        type: 'versus-rematch',
-        rematch: summarizeRematch(loaded, user.userId),
-        ...(loaded.createdMatchId
-          ? { matchedMatchId: loaded.createdMatchId }
-          : {}),
-      };
-    }
-    if (decision === 'join' && loaded) {
-      const match = createMatchRecord(
-        { ...loaded.requester, pattern: loaded.requesterPattern },
-        { ...loaded.responder, pattern },
-        'rematch',
-        now
-      );
-      const joined: RematchRecord = {
-        ...loaded,
-        status: 'matched',
-        createdMatchId: match.matchId,
-      };
-      try {
-        await transaction.multi();
-        await transaction.set(rematchKey, JSON.stringify(joined));
-        await transaction.expire(rematchKey, ARCHIVE_SECONDS);
-        await addMatchToTransaction(transaction, match, now);
-        const result: unknown = await transaction.exec();
-        if (result === null) {
-          continue;
-        }
-        return {
-          type: 'versus-rematch',
-          rematch: summarizeRematch(joined, user.userId),
-          matchedMatchId: match.matchId,
-        };
-      } catch {
-        continue;
-      }
-    }
     const next = createRematchRecord(settled, user, pattern, now);
+    const rematchKey = versusStorageKeys.rematch(
+      sourceMatchId,
+      next.requestId
+    );
+    const rematchRequestsKey = versusStorageKeys.rematchRequests(sourceMatchId);
+    const transaction = await redis.watch(rematchKey);
 
     try {
       await transaction.multi();
       await transaction.set(rematchKey, JSON.stringify(next));
       await transaction.expire(rematchKey, ARCHIVE_SECONDS);
+      await transaction.zAdd(rematchRequestsKey, {
+        member: next.requestId,
+        score: now,
+      });
+      await transaction.expire(rematchRequestsKey, ARCHIVE_SECONDS);
       const result: unknown = await transaction.exec();
       if (result === null) {
         continue;
@@ -671,8 +629,12 @@ export const submitRematchResponsePattern = async (
   if (!validation.valid) {
     throw new VersusStorageError(validation.message, 400);
   }
-  const key = versusStorageKeys.rematch(sourceMatchId);
   for (let attempt = 0; attempt < TRANSACTION_RETRIES; attempt += 1) {
+    const resolved = await loadRematchByRequest(sourceMatchId, requestId);
+    if (!resolved) {
+      throw new VersusStorageError('Invitation not found.', 404);
+    }
+    const key = resolved.key;
     const transaction = await redis.watch(key);
     const rematch = parseRematch(await redis.get(key));
     if (!rematch || rematch.requestId !== requestId) {
@@ -1075,14 +1037,44 @@ const addMatchToTransaction = async (
   }
 };
 
+const loadRematchByRequest = async (
+  sourceMatchId: string,
+  requestId: string
+): Promise<{ key: string; rematch: RematchRecord } | null> => {
+  const now = Date.now();
+  const requestKey = versusStorageKeys.rematch(sourceMatchId, requestId);
+  const requestRematch = await normalizeRematch(
+    parseRematch(await redis.get(requestKey)),
+    now,
+    requestKey
+  );
+  if (requestRematch?.requestId === requestId) {
+    return { key: requestKey, rematch: requestRematch };
+  }
+
+  const legacyKey = versusStorageKeys.rematch(sourceMatchId);
+  const legacyRematch = await normalizeRematch(
+    parseRematch(await redis.get(legacyKey)),
+    now,
+    legacyKey
+  );
+  return legacyRematch?.requestId === requestId
+    ? { key: legacyKey, rematch: legacyRematch }
+    : null;
+};
+
 const mutateRematch = async (
   sourceMatchId: string,
   requestId: string,
   userId: string,
   action: 'accept' | 'decline' | 'cancel'
 ): Promise<VersusRematchResponse> => {
-  const key = versusStorageKeys.rematch(sourceMatchId);
   for (let attempt = 0; attempt < TRANSACTION_RETRIES; attempt += 1) {
+    const resolved = await loadRematchByRequest(sourceMatchId, requestId);
+    if (!resolved) {
+      throw new VersusStorageError('Invitation not found.', 404);
+    }
+    const key = resolved.key;
     const transaction = await redis.watch(key);
     const rematch = parseRematch(await redis.get(key));
     if (!rematch || rematch.requestId !== requestId) {
@@ -1647,19 +1639,35 @@ const loadPendingItems = async (
 ): Promise<VersusPendingItem[]> => {
   const items: VersusPendingItem[] = [];
   for (const match of matches) {
-    const key = versusStorageKeys.rematch(match.matchId);
-    const rematch = await normalizeRematch(
-      parseRematch(await redis.get(key)),
-      now,
-      key,
-      match
+    const requestMembers = await redis.zRange(
+      versusStorageKeys.rematchRequests(match.matchId),
+      0,
+      -1,
+      { by: 'rank', reverse: true }
     );
-    if (
-      rematch &&
-      (rematch.status === 'pending' ||
-        rematch.status === 'accepted-awaiting-pattern')
-    ) {
-      items.push({ kind: 'rematch', rematch: summarizeRematch(rematch, userId) });
+    const rematchKeys = new Set<string>([
+      versusStorageKeys.rematch(match.matchId),
+      ...requestMembers.map((member) =>
+        versusStorageKeys.rematch(match.matchId, member.member)
+      ),
+    ]);
+    for (const key of rematchKeys) {
+      const rematch = await normalizeRematch(
+        parseRematch(await redis.get(key)),
+        now,
+        key,
+        match
+      );
+      if (
+        rematch &&
+        (rematch.status === 'pending' ||
+          rematch.status === 'accepted-awaiting-pattern')
+      ) {
+        items.push({
+          kind: 'rematch',
+          rematch: summarizeRematch(rematch, userId),
+        });
+      }
     }
   }
   const members = await redis.zRange(

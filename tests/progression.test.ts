@@ -16,7 +16,9 @@ describe('progression', () => {
   it('scales levels gently and caps requirements', () => {
     expect(xpRequiredForLevel(1)).toBe(300);
     expect(xpRequiredForLevel(2)).toBe(350);
-    expect(xpRequiredForLevel(20)).toBe(1000);
+    expect(xpRequiredForLevel(20)).toBe(1250);
+    expect(xpRequiredForLevel(55)).toBe(3000);
+    expect(xpRequiredForLevel(500)).toBe(3000);
     expect(summarizeProgress({ ...createInitialProgress(), totalXp: 315 })).toMatchObject({
       level: 2,
       levelXp: 15,
@@ -26,9 +28,10 @@ describe('progression', () => {
 
   it('grows and caps Daily XP', () => {
     expect(dailyXpForStreak(1)).toBe(150);
-    expect(dailyXpForStreak(2)).toBe(165);
-    expect(dailyXpForStreak(11)).toBe(300);
-    expect(dailyXpForStreak(100)).toBe(300);
+    expect(dailyXpForStreak(2)).toBe(160);
+    expect(dailyXpForStreak(3)).toBe(170);
+    expect(dailyXpForStreak(51)).toBe(650);
+    expect(dailyXpForStreak(100)).toBe(650);
   });
 
   it('keeps strict consecutive UTC streaks', () => {

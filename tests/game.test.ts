@@ -25,6 +25,7 @@ describe('Daily puzzle numbering', () => {
     expect(todayUtcDate(new Date('2026-07-08T00:00:00.000Z'))).toBe('2026-07-08');
     expect(createDailyPuzzleId(todayUtcDate(new Date('2026-07-08T00:00:00.000Z'))).puzzleNumber).toBe(2);
   });
+
 });
 
 describe('player sessions', () => {
@@ -100,7 +101,7 @@ describe('results', () => {
     expect(createShareText(session)).not.toContain('A1');
   });
 
-  it('selects the leaders and adds a lower player after an ellipsis', () => {
+  it('shows the top three, the player, and the final-ranked player', () => {
     const leaders = [
       { rank: 1, displayName: 'one', guesses: 4, solvedAt: 1 },
       { rank: 2, displayName: 'two', guesses: 5, solvedAt: 2 },
@@ -108,8 +109,16 @@ describe('results', () => {
     ];
     expect(selectLeaderboardDisplayRows(leaders, leaders[1] ?? null)).toHaveLength(3);
 
+    const fourth = { rank: 4, displayName: 'four', guesses: 7, solvedAt: 4 };
+    const last = { rank: 12, displayName: 'last', guesses: 12, solvedAt: 12 };
+    expect(selectLeaderboardDisplayRows(leaders, fourth, last).slice(-3)).toEqual([
+      { kind: 'entry', entry: fourth, isPlayer: true },
+      { kind: 'ellipsis' },
+      { kind: 'entry', entry: last, isPlayer: false },
+    ]);
+
     const player = { rank: 12, displayName: 'me', guesses: 9, solvedAt: 12 };
-    expect(selectLeaderboardDisplayRows(leaders, player).slice(-2)).toEqual([
+    expect(selectLeaderboardDisplayRows(leaders, player, last).slice(-2)).toEqual([
       { kind: 'ellipsis' },
       { kind: 'entry', entry: player, isPlayer: true },
     ]);
