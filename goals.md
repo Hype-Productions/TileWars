@@ -5,8 +5,8 @@
 - **Hackathon deadline:** July 16, 2026 at 04:00 Europe/Athens (July 15 at 18:00 PDT).
 - **Developer listing:** https://developers.reddit.com/apps/tilematching
 - **Public community:** https://reddit.com/r/TileWars
-- **Playable post:** _Add the direct public post URL after installation._
-- **How to Play post:** _Add the direct public post URL after publishing it._
+- **Playable post:** https://www.reddit.com/r/TileWars/comments/1uxf5te/daily_tile_wars/
+- **How to Play post:** https://www.reddit.com/r/TileWars/comments/1uxf96k/how_to_play_tilewars/
 - **Devpost submission:** _Add the submitted project URL._
 
 `tilematching` is the permanent internal Devvit app identifier. TILEWARS is the public display name. Do not create a second Devvit app for the launch.
@@ -29,7 +29,8 @@
 - [x] Update the moderator menu copy to TILEWARS.
 - [x] Preserve the result-thread and streak-XP fixes without changing Redis retention.
 - [x] Run the final type-check, lint, all 48 tests, and production build.
-- [ ] Start the public `r/TileWars` playtest and capture the playable post URL.
+- [x] Start the public `r/TileWars` playtest and capture the playable post URL.
+- [x] Confirm installation created the playable post and its single app-owned stickied Daily-results comment.
 
 ### Partner
 
@@ -42,10 +43,11 @@
 ### User
 
 - [ ] Confirm the public playable post opens for a non-moderator account.
-- [ ] Pin the playable post in `r/TileWars`.
-- [ ] Publish and pin the How to Play post below.
+- [x] Pin the playable post in `r/TileWars`.
+- [x] Publish and pin the How to Play post below.
 - [ ] Complete the two-account Daily and Versus validation checklist.
-- [ ] Add the playable post, How to Play post, and Devpost URLs above.
+- [x] Add the playable post and How to Play post URLs above.
+- [ ] Add the Devpost submission URL above.
 - [ ] Submit the developer listing and public playable post to Devpost before the deadline.
 - [ ] Authorize and run the final unlisted Reddit publish after the partner README is incorporated.
 
@@ -73,12 +75,12 @@ Choose a hidden connected pattern of exactly six tiles, then challenge another p
 
 Use Find Match for a public opponent or Invite to share a challenge. Results include both replay boards, rivalry totals, match history, and XP earned.
 
-**Play TILEWARS:** _Replace this line with the direct playable post URL._
+**Play TILEWARS:** https://www.reddit.com/r/TileWars/comments/1uxf5te/daily_tile_wars/
 
 ## Public validation checklist
 
-- [ ] Splash shows TILEWARS and Daily #1 on July 15 UTC.
-- [ ] The `r/` action opens `r/TileWars`.
+- [x] Splash shows TILEWARS and Daily #1 on July 15 UTC.
+- [x] The splash `r/` action is configured to open public `r/TileWars` from every installation.
 - [ ] Daily guesses, clues, X marks, refresh persistence, and Help work.
 - [ ] A completed Daily shows the correct guesses, time, base XP, and streak bonus.
 - [ ] The Daily leaderboard is shared between two public-community accounts.
