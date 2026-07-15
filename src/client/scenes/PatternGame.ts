@@ -27,10 +27,12 @@ import type {
   ProgressReward,
 } from '../../shared/progression';
 import {
+  DAILY_BASE_XP,
   buildXpAnimationSegments,
   dailyXpForStreak,
   summarizeProgress,
 } from '../../shared/progression';
+import { formatDuration, formatOptionalDuration } from '../../shared/time';
 import {
   TILE_WARS_COLORS,
   clearSceneContent,
@@ -128,7 +130,10 @@ export class PatternGame extends Scene {
     if (typeof sharedInviteId === 'string') {
       const acceptInvite = this.registry.get('acceptSharedInvite') === true;
       this.registry.remove('acceptSharedInvite');
-      this.scene.start('VersusLobby', { inviteId: sharedInviteId, acceptInvite });
+      this.scene.start('VersusLobby', {
+        inviteId: sharedInviteId,
+        acceptInvite,
+      });
       return;
     }
     const startMode: unknown = this.registry.get('startMode');
@@ -181,13 +186,8 @@ export class PatternGame extends Scene {
     const height = this.scale.height;
     const mobile = width < 760;
     const shortLandscape = width >= 600 && height < 500;
-    const headingY = this.screen === 'loading'
-      ? 46
-      : shortLandscape
-        ? 24
-        : mobile
-          ? 38
-          : 36;
+    const headingY =
+      this.screen === 'loading' ? 46 : shortLandscape ? 24 : mobile ? 38 : 36;
     this.sceneShell = ensureTileWarsSceneShell(this, this.sceneShell, {
       width,
       height,
@@ -318,7 +318,7 @@ export class PatternGame extends Scene {
     const mobile = width < 760;
     const shortLandscape = width >= 600 && height < 500;
     this.cameras.resize(width, height);
-    this.drawDailyHeader(mobile, shortLandscape);
+    this.drawDailyHeader(shortLandscape);
 
     this.layoutBoard(mobile, shortLandscape);
     this.createTiles();
@@ -327,13 +327,18 @@ export class PatternGame extends Scene {
     this.drawGameToolbar(mobile, shortLandscape);
 
     this.add
-      .text(width / 2, shortLandscape ? height - 65 : mobile ? height - 116 : height - 42, '', {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: mobile ? '13px' : '15px',
-        color: '#25313b',
-        align: 'center',
-        wordWrap: { width: Math.min(560, width - 28) },
-      })
+      .text(
+        width / 2,
+        shortLandscape ? height - 65 : mobile ? height - 116 : height - 42,
+        '',
+        {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: mobile ? '13px' : '15px',
+          color: '#25313b',
+          align: 'center',
+          wordWrap: { width: Math.min(560, width - 28) },
+        }
+      )
       .setName('game-status')
       .setOrigin(0.5);
 
@@ -350,18 +355,15 @@ export class PatternGame extends Scene {
   private layoutBoard(mobile: boolean, shortLandscape: boolean): void {
     const width = this.scale.width;
     const height = this.scale.height;
-    const headerReserve = mobile ? 174 : 178;
-    const footerReserve = mobile ? 136 : 108;
+    const headerReserve = shortLandscape ? 178 : 224;
+    const footerReserve = mobile ? 136 : 94;
     let rawBoardSize: number;
 
     if (shortLandscape) {
-      rawBoardSize = Math.max(
-        150,
-        Math.min(width - 30, height - 210, 260)
-      );
+      rawBoardSize = Math.max(150, Math.min(width - 30, height - 210, 260));
       this.boardSize = snapBoardSize(rawBoardSize);
       this.boardX = Math.round((width - this.boardSize) / 2);
-      this.boardY = 128;
+      this.boardY = 178;
     } else if (mobile) {
       rawBoardSize = Math.max(
         245,
@@ -387,26 +389,19 @@ export class PatternGame extends Scene {
     this.tileSize = this.boardSize / BOARD_DIMENSION;
   }
 
-  private drawDailyHeader(mobile: boolean, shortLandscape: boolean): void {
+  private drawDailyHeader(shortLandscape: boolean): void {
     if (!this.session) {
       return;
     }
-    const y = shortLandscape ? 57 : mobile ? 76 : 78;
+    const y = shortLandscape ? 56 : 72;
     drawHeaderChip(
       this,
-      this.scale.width / 2 - 55,
+      this.scale.width / 2,
       y,
       `Daily #${this.session.puzzleId.puzzleNumber}`,
       TILE_WARS_COLORS.blue,
-      98
-    );
-    drawHeaderChip(
-      this,
-      this.scale.width / 2 + 55,
-      y,
-      `🔥 ${this.progress?.dailyStreak ?? 0}`,
-      TILE_WARS_COLORS.orange,
-      70
+      94,
+      24
     );
   }
 
@@ -422,16 +417,20 @@ export class PatternGame extends Scene {
     const totalTiles =
       this.session.totalTiles || this.pattern.length || Math.max(remaining, 1);
     const foundTiles = Math.max(0, totalTiles - remaining);
+    const tileSize = shortLandscape ? 22 : mobile ? 28 : 32;
+    const tileY =
+      this.boardY - tileSize / 2 - (shortLandscape ? 10 : mobile ? 28 : 30);
     drawGameplayStatsHud(this, {
       centerX: this.boardX + this.boardSize / 2,
-      labelY: shortLandscape ? 82 : mobile ? 106 : 108,
-      tileY: shortLandscape ? 106 : mobile ? 135 : 139,
+      labelY: tileY - tileSize / 2 - (shortLandscape ? 8 : 10),
+      tileY,
       totalTiles,
       foundTiles,
       guesses: this.session.guesses.length,
-      tileSize: shortLandscape ? 22 : mobile ? 28 : 32,
+      tileSize,
       gap: shortLandscape ? 3 : mobile ? 4 : 5,
       groupGap: shortLandscape ? 18 : mobile ? 24 : 34,
+      stacked: true,
     });
   }
 
@@ -581,7 +580,10 @@ export class PatternGame extends Scene {
     const height = this.scale.height;
     const mobile = width < 760;
     const shortLandscape = width >= 600 && height < 500;
-    const modalWidth = Math.min(width - 24, shortLandscape ? 760 : mobile ? 380 : 460);
+    const modalWidth = Math.min(
+      width - 24,
+      shortLandscape ? 760 : mobile ? 380 : 460
+    );
     const modalHeight = Math.min(height - 24, 520);
     const x = (width - modalWidth) / 2;
     const y = (height - modalHeight) / 2;
@@ -591,11 +593,16 @@ export class PatternGame extends Scene {
       .setInteractive({ useHandCursor: false });
     const overlay = this.add.graphics();
     const panel = this.add.graphics();
-    const elapsed = formatElapsedTime(
+    const elapsed = formatDuration(
       (this.session.solvedAt ?? Date.now()) - this.session.startedAt
     );
-    const earnedXp = this.dailyReward?.amount ??
-      (this.progress ? dailyXpForStreak(this.progress.dailyStreak) : 0);
+    const earnedXp =
+      this.progress && this.dailyReward
+        ? Math.max(0, this.progress.totalXp - this.dailyReward.previousTotalXp)
+        : (this.dailyReward?.amount ??
+          (this.progress ? dailyXpForStreak(this.progress.dailyStreak) : 0));
+    const baseDailyXp = Math.min(DAILY_BASE_XP, earnedXp);
+    const streakBonusXp = Math.max(0, earnedXp - baseDailyXp);
     const pendingReward =
       this.dailyReward &&
       !this.acknowledgedRewardIds.has(this.dailyReward.rewardId)
@@ -648,18 +655,38 @@ export class PatternGame extends Scene {
 
     const summaryCenter = shortLandscape ? x + modalWidth * 0.25 : width / 2;
     const summaryWidth = shortLandscape ? modalWidth * 0.46 : modalWidth;
-    const statY = y + 99;
+    const statY = y + 111;
     this.drawResultMetric(
       summaryCenter - summaryWidth * 0.2,
       statY,
       'Guesses',
       this.session.guesses.length.toString()
     );
-    this.drawResultMetric(summaryCenter + summaryWidth * 0.2, statY, 'Time', elapsed);
+    this.drawResultMetric(
+      summaryCenter + summaryWidth * 0.2,
+      statY,
+      'Time',
+      elapsed
+    );
+
+    this.add
+      .text(
+        summaryCenter,
+        y + 146,
+        `🔥 ${this.progress?.dailyStreak ?? 0} day streak`,
+        {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: mobile ? '13px' : '14px',
+          color: '#d88416',
+          resolution: TEXT_RESOLUTION,
+        }
+      )
+      .setName('result-streak-label')
+      .setOrigin(0.5);
 
     if (displayedProgress) {
       this.add
-        .text(summaryCenter, y + 145, `Level ${displayedProgress.level}`, {
+        .text(summaryCenter, y + 177, `Level ${displayedProgress.level}`, {
           fontFamily: 'Arial Black, Arial, sans-serif',
           fontSize: '15px',
           color: '#25313b',
@@ -669,26 +696,36 @@ export class PatternGame extends Scene {
       this.add
         .text(
           summaryCenter,
-          y + 167,
-          `${displayedProgress.levelXp}/${displayedProgress.xpForNextLevel} XP · +${earnedXp} XP earned`,
+          y + 199,
+          `${displayedProgress.levelXp}/${displayedProgress.xpForNextLevel} XP + ${baseDailyXp} daily`,
           {
             fontFamily: 'Arial Black, Arial, sans-serif',
-            fontSize: mobile ? '11px' : '12px',
+            fontSize: mobile ? '10px' : '11px',
             color: '#53606b',
           }
         )
         .setName('result-xp-label')
-        .setOrigin(0.5);
+        .setOrigin(1, 0.5);
+      this.add
+        .text(summaryCenter, y + 199, `+ ${streakBonusXp} streak`, {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: mobile ? '10px' : '11px',
+          color: '#d88416',
+        })
+        .setName('result-streak-xp-label')
+        .setOrigin(0, 0.5);
+      this.centerResultXpLabels(summaryCenter);
       this.drawResultProgressBar(
         x + 24,
-        y + 181,
-        shortLandscape ? modalWidth * 0.46 - 48 : modalWidth - 48
+        y + 213,
+        shortLandscape ? modalWidth * 0.46 - 48 : modalWidth - 48,
+        summaryCenter
       );
     }
 
     this.drawResultLeaderboard(
       shortLandscape ? x + modalWidth * 0.52 : x + 24,
-      shortLandscape ? y + 92 : y + 211,
+      shortLandscape ? y + 92 : y + 253,
       shortLandscape ? modalWidth * 0.45 : modalWidth - 48
     );
 
@@ -737,9 +774,29 @@ export class PatternGame extends Scene {
       .setOrigin(0.5);
   }
 
+  private centerResultXpLabels(centerX: number): void {
+    const xpLabel = this.children.getByName('result-xp-label');
+    const streakXpLabel = this.children.getByName('result-streak-xp-label');
+    if (
+      !(xpLabel instanceof GameObjects.Text) ||
+      !(streakXpLabel instanceof GameObjects.Text)
+    ) {
+      return;
+    }
+
+    const gap = 4;
+    const totalWidth = xpLabel.width + gap + streakXpLabel.width;
+    const left = centerX - totalWidth / 2;
+    xpLabel.setX(left + xpLabel.width);
+    streakXpLabel.setX(left + xpLabel.width + gap);
+  }
+
   private drawResultLeaderboard(x: number, y: number, width: number): void {
     const graphics = this.add.graphics();
-    const rows = selectLeaderboardDisplayRows(this.leaderboard, this.playerRank);
+    const rows = selectLeaderboardDisplayRows(
+      this.leaderboard,
+      this.playerRank
+    );
 
     this.add
       .text(x, y, 'Daily Leaderboard', {
@@ -764,7 +821,7 @@ export class PatternGame extends Scene {
     }
 
     rows.forEach((row, index) => {
-      const rowY = y + 24 + index * 28;
+      const rowY = y + 38 + index * 40;
       if (row.kind === 'ellipsis') {
         this.add
           .text(x + width / 2, rowY, '…', {
@@ -776,10 +833,17 @@ export class PatternGame extends Scene {
         return;
       }
       const entry = row.entry;
-      graphics.fillStyle(0xffffff, 0.62);
-      graphics.fillRoundedRect(x, rowY - 12, width, 24, 6);
-      graphics.lineStyle(1, COLORS.line, 0.14);
-      graphics.strokeRoundedRect(x, rowY - 12, width, 24, 6);
+      graphics.fillStyle(
+        row.isPlayer ? 0xd5ffc7 : 0xffffff,
+        row.isPlayer ? 0.88 : 0.62
+      );
+      graphics.fillRoundedRect(x, rowY - 18, width, 36, 6);
+      graphics.lineStyle(
+        2,
+        row.isPlayer ? COLORS.green : COLORS.line,
+        row.isPlayer ? 0.9 : 0.14
+      );
+      graphics.strokeRoundedRect(x, rowY - 18, width, 36, 6);
       const rankColors = {
         green: COLORS.green,
         red: COLORS.red,
@@ -787,10 +851,10 @@ export class PatternGame extends Scene {
         orange: COLORS.orange,
       };
       graphics.fillStyle(rankColors[leaderboardRankColor(entry.rank)], 1);
-      graphics.fillRoundedRect(x + 5, rowY - 9, 18, 18, 4);
+      graphics.fillRoundedRect(x + 5, rowY - 12, 24, 24, 4);
 
       this.add
-        .text(x + 14, rowY, entry.rank.toString(), {
+        .text(x + 17, rowY, entry.rank.toString(), {
           fontFamily: 'Arial Black, Arial, sans-serif',
           fontSize: '10px',
           color: '#ffffff',
@@ -798,20 +862,43 @@ export class PatternGame extends Scene {
         })
         .setOrigin(0.5);
       this.add
-        .text(x + 30, rowY, truncateDisplayName(entry.displayName, width < 330 ? 15 : 23), {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '10px',
-          color: '#25313b',
-          resolution: TEXT_RESOLUTION,
-        })
+        .text(
+          x + 36,
+          rowY,
+          truncateDisplayName(entry.displayName, width < 330 ? 15 : 23),
+          {
+            fontFamily: 'Arial Black, Arial, sans-serif',
+            fontSize: '10px',
+            color: '#25313b',
+            resolution: TEXT_RESOLUTION,
+          }
+        )
         .setOrigin(0, 0.5);
       this.add
-        .text(x + width - 10, rowY, `${entry.guesses} guesses`, {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: '10px',
-          color: '#667380',
-          resolution: TEXT_RESOLUTION,
-        })
+        .text(
+          x + width - 10,
+          rowY - 7,
+          `${entry.guesses} ${entry.guesses === 1 ? 'guess' : 'guesses'}`,
+          {
+            fontFamily: 'Arial Black, Arial, sans-serif',
+            fontSize: '10px',
+            color: '#25313b',
+            resolution: TEXT_RESOLUTION,
+          }
+        )
+        .setOrigin(1, 0.5);
+      this.add
+        .text(
+          x + width - 10,
+          rowY + 8,
+          formatLeaderboardTime(entry.durationMs),
+          {
+            fontFamily: 'Arial, sans-serif',
+            fontSize: '10px',
+            color: '#667380',
+            resolution: TEXT_RESOLUTION,
+          }
+        )
         .setOrigin(1, 0.5);
     });
   }
@@ -823,7 +910,12 @@ export class PatternGame extends Scene {
     });
   }
 
-  private drawResultProgressBar(x: number, y: number, width: number): void {
+  private drawResultProgressBar(
+    x: number,
+    y: number,
+    width: number,
+    centerX: number
+  ): void {
     if (!this.progress) {
       return;
     }
@@ -838,6 +930,17 @@ export class PatternGame extends Scene {
     const reward = this.dailyReward;
     const levelLabel = this.children.getByName('result-level-label');
     const xpLabel = this.children.getByName('result-xp-label');
+    const streakXpLabel = this.children.getByName('result-streak-xp-label');
+    const rewardAmount =
+      reward && this.progress
+        ? Math.max(0, this.progress.totalXp - reward.previousTotalXp)
+        : (reward?.amount ?? 0);
+    const baseDailyXp = Math.min(DAILY_BASE_XP, rewardAmount);
+    const streakBonusXp = Math.max(0, rewardAmount - baseDailyXp);
+
+    if (streakXpLabel instanceof GameObjects.Text) {
+      streakXpLabel.setText(`+ ${streakBonusXp} streak`);
+    }
 
     if (!reward || this.acknowledgedRewardIds.has(reward.rewardId)) {
       fill.setScale(
@@ -849,7 +952,7 @@ export class PatternGame extends Scene {
 
     const segments = buildXpAnimationSegments(
       reward.previousTotalXp,
-      reward.newTotalXp
+      reward.previousTotalXp + rewardAmount
     );
     const animateSegment = (index: number): void => {
       const segment = segments[index];
@@ -859,8 +962,9 @@ export class PatternGame extends Scene {
         }
         if (xpLabel instanceof GameObjects.Text && this.progress) {
           xpLabel.setText(
-            `${this.progress.levelXp}/${this.progress.xpForNextLevel} XP · +${reward.amount} XP earned`
+            `${this.progress.levelXp}/${this.progress.xpForNextLevel} XP + ${baseDailyXp} daily`
           );
+          this.centerResultXpLabels(centerX);
         }
         void this.acknowledgeDailyReward(reward.rewardId);
         return;
@@ -878,14 +982,16 @@ export class PatternGame extends Scene {
           if (xpLabel instanceof GameObjects.Text) {
             const shownXp = Math.round(segment.xpForNextLevel * fill.scaleX);
             xpLabel.setText(
-              `${shownXp}/${segment.xpForNextLevel} XP · +${reward.amount} XP earned`
+              `${shownXp}/${segment.xpForNextLevel} XP + ${baseDailyXp} daily`
             );
+            this.centerResultXpLabels(centerX);
           }
         },
         onComplete: () => {
           if (segment.completesLevel) {
             this.tweens.add({
-              targets: levelLabel instanceof GameObjects.Text ? levelLabel : fill,
+              targets:
+                levelLabel instanceof GameObjects.Text ? levelLabel : fill,
               scaleX: 1.12,
               scaleY: 1.12,
               yoyo: true,
@@ -1262,14 +1368,7 @@ export class PatternGame extends Scene {
     } else if (guess) {
       graphics.fillStyle(COLORS.paper, 1);
       graphics.fillRoundedRect(tileX, tileY, size, size, radius);
-      this.drawCluePattern(
-        graphics,
-        tileX,
-        tileY,
-        size,
-        radius,
-        guess.clue
-      );
+      this.drawCluePattern(graphics, tileX, tileY, size, radius, guess.clue);
     } else {
       graphics.fillStyle(COLORS.paper, 1);
       graphics.fillRoundedRect(tileX, tileY, size, size, radius);
@@ -1396,19 +1495,8 @@ export class PatternGame extends Scene {
       const segmentX = x + segmentSize * index;
       if (isLastSegment) {
         const remainingWidth = size - segmentSize * index;
-        graphics.fillRoundedRect(
-          segmentX,
-          y,
-          remainingWidth,
-          size,
-          radius
-        );
-        graphics.fillRect(
-          segmentX,
-          y,
-          Math.min(radius, remainingWidth),
-          size
-        );
+        graphics.fillRoundedRect(segmentX, y, remainingWidth, size, radius);
+        graphics.fillRect(segmentX, y, Math.min(radius, remainingWidth), size);
       } else {
         graphics.fillRect(segmentX, y, segmentSize, size);
       }
@@ -1501,9 +1589,7 @@ const toDailySessionResponse = (
   return response;
 };
 
-const isProgressSummary = (
-  value: unknown
-): value is PlayerProgressSummary => {
+const isProgressSummary = (value: unknown): value is PlayerProgressSummary => {
   return (
     isRecord(value) &&
     typeof value.totalXp === 'number' &&
@@ -1551,7 +1637,8 @@ const isLeaderboardEntry = (value: unknown): value is LeaderboardEntry => {
     typeof value.rank === 'number' &&
     typeof value.displayName === 'string' &&
     typeof value.guesses === 'number' &&
-    typeof value.solvedAt === 'number'
+    typeof value.solvedAt === 'number' &&
+    (value.durationMs === undefined || typeof value.durationMs === 'number')
   );
 };
 
@@ -1563,12 +1650,8 @@ const snapBoardSize = (size: number): number => {
   return Math.floor(size / BOARD_DIMENSION) * BOARD_DIMENSION;
 };
 
-const formatElapsedTime = (durationMs: number): string => {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-};
+const formatLeaderboardTime = (durationMs: number | undefined): string =>
+  formatOptionalDuration(durationMs);
 
 const formatDailyDate = (date: string): string => {
   const parsed = new Date(`${date}T00:00:00.000Z`);

@@ -51,6 +51,7 @@ type GameplayHudOptions = {
   tileSize: number;
   gap?: number;
   groupGap?: number;
+  stacked?: boolean;
 };
 
 export type TileWarsSceneShell = {
@@ -148,7 +149,8 @@ export const drawTileHeading = (
   const letters = [...text.replace(/\s+/g, '').toUpperCase()];
   const size = Math.min(maxSize, mobile ? 29 : 34);
   const gap = mobile ? 4 : 5;
-  const totalWidth = letters.length * size + Math.max(0, letters.length - 1) * gap;
+  const totalWidth =
+    letters.length * size + Math.max(0, letters.length - 1) * gap;
   const left = -totalWidth / 2;
   const container = scene.add.container(x, y);
   const graphics = scene.add.graphics();
@@ -156,7 +158,8 @@ export const drawTileHeading = (
 
   letters.forEach((letter, index) => {
     const tileX = left + index * (size + gap);
-    const color = TITLE_COLORS[index % TITLE_COLORS.length] ?? TILE_WARS_COLORS.green;
+    const color =
+      TITLE_COLORS[index % TITLE_COLORS.length] ?? TILE_WARS_COLORS.green;
     graphics.fillStyle(TILE_WARS_COLORS.shadow, 0.2);
     graphics.fillRoundedRect(tileX + 3, -size / 2 + 4, size, size, 6);
     graphics.fillStyle(color, 1);
@@ -286,7 +289,8 @@ export const drawTileButton = (
   options: TileButtonOptions
 ): GameObjects.Container => {
   const variant = options.variant ?? 'dark';
-  const width = options.width ?? Math.max(78, Math.min(148, options.label.length * 8 + 30));
+  const width =
+    options.width ?? Math.max(78, Math.min(148, options.label.length * 8 + 30));
   const height = options.height ?? 38;
   const colors: Record<TileButtonVariant, number> = {
     dark: TILE_WARS_COLORS.line,
@@ -318,9 +322,25 @@ export const drawTileButton = (
     graphics.fillStyle(TILE_WARS_COLORS.shadow, options.disabled ? 0.1 : 0.24);
     graphics.fillRoundedRect(-width / 2 + 3, -height / 2 + 5, width, height, 8);
     graphics.fillStyle(color, options.disabled ? 0.48 : 1);
-    graphics.fillRoundedRect(-width / 2, -height / 2 + offset, width, height, 8);
-    graphics.lineStyle(2, TILE_WARS_COLORS.line, options.disabled ? 0.35 : 0.82);
-    graphics.strokeRoundedRect(-width / 2, -height / 2 + offset, width, height, 8);
+    graphics.fillRoundedRect(
+      -width / 2,
+      -height / 2 + offset,
+      width,
+      height,
+      8
+    );
+    graphics.lineStyle(
+      2,
+      TILE_WARS_COLORS.line,
+      options.disabled ? 0.35 : 0.82
+    );
+    graphics.strokeRoundedRect(
+      -width / 2,
+      -height / 2 + offset,
+      width,
+      height,
+      8
+    );
     label.setY(offset).setAlpha(options.disabled ? 0.62 : 1);
   };
   draw(base);
@@ -377,18 +397,31 @@ export const drawGameplayStatsHud = (
   const count = Math.max(1, Math.min(8, options.totalTiles));
   const gap = options.gap ?? 4;
   const groupGap = options.groupGap ?? 26;
-  const foundWidth =
-    count * options.tileSize + Math.max(0, count - 1) * gap;
+  const foundWidth = count * options.tileSize + Math.max(0, count - 1) * gap;
+  const stacked = options.stacked === true;
   const totalWidth = foundWidth + groupGap + options.tileSize;
-  const left = -totalWidth / 2;
-  const foundCenter = left + foundWidth / 2;
-  const guessX = left + foundWidth + groupGap + options.tileSize / 2;
+  const left = stacked ? -foundWidth / 2 : -totalWidth / 2;
+  const foundCenter = stacked ? 0 : left + foundWidth / 2;
+  const guessX = stacked
+    ? 0
+    : left + foundWidth + groupGap + options.tileSize / 2;
+  const stackGap = 30;
+  const foundTileY = options.tileY;
+  const guessTileY = stacked
+    ? options.tileY - options.tileSize - stackGap
+    : options.tileY;
+  const guessLabelY = stacked
+    ? guessTileY - options.tileSize / 2 - 10
+    : options.labelY;
+  const foundLabelY = stacked
+    ? foundTileY - options.tileSize / 2 - 10
+    : options.labelY;
   const container = scene.add.container(options.centerX, 0);
   const graphics = scene.add.graphics();
   container.add(graphics);
   container.add(
     scene.add
-      .text(foundCenter, options.labelY, 'TILES FOUND', {
+      .text(foundCenter, foundLabelY, 'TILES FOUND', {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: options.tileSize <= 28 ? '10px' : '11px',
         color: '#25313b',
@@ -397,7 +430,7 @@ export const drawGameplayStatsHud = (
   );
   container.add(
     scene.add
-      .text(guessX, options.labelY, 'GUESSES', {
+      .text(guessX, guessLabelY, 'GUESSES', {
         fontFamily: 'Arial Black, Arial, sans-serif',
         fontSize: options.tileSize <= 28 ? '10px' : '11px',
         color: '#25313b',
@@ -410,7 +443,7 @@ export const drawGameplayStatsHud = (
     graphics.fillStyle(TILE_WARS_COLORS.shadow, lit ? 0.22 : 0.1);
     graphics.fillRoundedRect(
       tileX + 2,
-      options.tileY - options.tileSize / 2 + 3,
+      foundTileY - options.tileSize / 2 + 3,
       options.tileSize,
       options.tileSize,
       6
@@ -421,7 +454,7 @@ export const drawGameplayStatsHud = (
     );
     graphics.fillRoundedRect(
       tileX,
-      options.tileY - options.tileSize / 2,
+      foundTileY - options.tileSize / 2,
       options.tileSize,
       options.tileSize,
       6
@@ -429,14 +462,14 @@ export const drawGameplayStatsHud = (
     graphics.lineStyle(2, TILE_WARS_COLORS.line, lit ? 0.76 : 0.36);
     graphics.strokeRoundedRect(
       tileX,
-      options.tileY - options.tileSize / 2,
+      foundTileY - options.tileSize / 2,
       options.tileSize,
       options.tileSize,
       6
     );
   }
   const guessLeft = guessX - options.tileSize / 2;
-  const guessTop = options.tileY - options.tileSize / 2;
+  const guessTop = guessTileY - options.tileSize / 2;
   graphics.fillStyle(TILE_WARS_COLORS.shadow, 0.24);
   graphics.fillRoundedRect(
     guessLeft + 3,
@@ -463,9 +496,20 @@ export const drawGameplayStatsHud = (
   );
   container.add(
     scene.add
-      .text(guessX, options.tileY, options.guesses.toString(), {
+      .text(guessX, guessTileY, options.guesses.toString(), {
         fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: options.guesses > 99 ? '14px' : options.tileSize <= 28 ? '17px' : '19px',
+        fontSize:
+          options.guesses > 99
+            ? options.tileSize <= 28
+              ? '12px'
+              : '14px'
+            : options.guesses > 9
+              ? options.tileSize <= 28
+                ? '14px'
+                : '16px'
+              : options.tileSize <= 28
+                ? '17px'
+                : '19px',
         color: '#ffffff',
       })
       .setOrigin(0.5)
@@ -494,7 +538,10 @@ export const drawHowToPlayModal = (
   const x = (width - modalWidth) / 2;
   const y = (height - modalHeight) / 2;
   const container = scene.add.container(0, 0);
-  const blocker = scene.add.zone(0, 0, width, height).setOrigin(0).setInteractive();
+  const blocker = scene.add
+    .zone(0, 0, width, height)
+    .setOrigin(0)
+    .setInteractive();
   const overlay = scene.add.graphics();
   overlay.fillStyle(0x111820, 0.46);
   overlay.fillRect(0, 0, width, height);
@@ -527,16 +574,25 @@ export const drawHowToPlayModal = (
   steps.forEach((step, index) => {
     container.add(
       scene.add
-        .text(contentLeft, y + 64 + index * (landscape ? 34 : compact ? 31 : 34), step, {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: compact ? '13px' : '14px',
-          color: '#25313b',
-          wordWrap: { width: stepWidth },
-        })
+        .text(
+          contentLeft,
+          y + 64 + index * (landscape ? 34 : compact ? 31 : 34),
+          step,
+          {
+            fontFamily: 'Arial Black, Arial, sans-serif',
+            fontSize: compact ? '13px' : '14px',
+            color: '#25313b',
+            wordWrap: { width: stepWidth },
+          }
+        )
         .setOrigin(0, 0.5)
     );
   });
-  const sampleSize = landscape ? Math.min(148, modalHeight - 188) : compact ? 128 : 148;
+  const sampleSize = landscape
+    ? Math.min(148, modalHeight - 188)
+    : compact
+      ? 128
+      : 148;
   const cell = sampleSize / 5;
   const sampleX = landscape
     ? x + modalWidth * 0.25 - sampleSize / 2
@@ -556,7 +612,10 @@ export const drawHowToPlayModal = (
       const tileSize = cell - 4;
       const sample = samples.get(`${row},${col}`);
       const tile = scene.add.graphics();
-      tile.fillStyle(sample?.color ?? TILE_WARS_COLORS.paper, sample ? 1 : 0.76);
+      tile.fillStyle(
+        sample?.color ?? TILE_WARS_COLORS.paper,
+        sample ? 1 : 0.76
+      );
       tile.fillRoundedRect(tileX, tileY, tileSize, tileSize, 4);
       tile.lineStyle(1, TILE_WARS_COLORS.line, sample ? 0.78 : 0.3);
       tile.strokeRoundedRect(tileX, tileY, tileSize, tileSize, 4);
@@ -575,15 +634,39 @@ export const drawHowToPlayModal = (
     }
   }
   const clues = [
-    { label: 'Green — This tile is part of the pattern.', colors: [TILE_WARS_COLORS.green] },
-    { label: 'Red — The pattern has at least one tile in this column.', colors: [TILE_WARS_COLORS.red] },
-    { label: 'Blue — The pattern has at least one tile in this row.', colors: [TILE_WARS_COLORS.blue] },
-    { label: 'Orange — At least one pattern tile lies diagonally from here.', colors: [TILE_WARS_COLORS.orange] },
-    { label: 'Multicolored tiles give a combination of clues.', colors: [TILE_WARS_COLORS.red, TILE_WARS_COLORS.blue, TILE_WARS_COLORS.orange] },
-    { label: 'X — Mark tiles you’ve ruled out to plan your next move.', colors: [TILE_WARS_COLORS.line] },
+    {
+      label: 'Green — This tile is part of the pattern.',
+      colors: [TILE_WARS_COLORS.green],
+    },
+    {
+      label: 'Red — The pattern has at least one tile in this column.',
+      colors: [TILE_WARS_COLORS.red],
+    },
+    {
+      label: 'Blue — The pattern has at least one tile in this row.',
+      colors: [TILE_WARS_COLORS.blue],
+    },
+    {
+      label: 'Orange — At least one pattern tile lies diagonally from here.',
+      colors: [TILE_WARS_COLORS.orange],
+    },
+    {
+      label: 'Multicolored tiles give a combination of clues.',
+      colors: [
+        TILE_WARS_COLORS.red,
+        TILE_WARS_COLORS.blue,
+        TILE_WARS_COLORS.orange,
+      ],
+    },
+    {
+      label: 'X — Mark tiles you’ve ruled out to plan your next move.',
+      colors: [TILE_WARS_COLORS.line],
+    },
   ];
   const clueX = landscape ? x + modalWidth * 0.53 : x + 16;
-  const clueStart = landscape ? y + 78 : sampleY + sampleSize + (compact ? 16 : 20);
+  const clueStart = landscape
+    ? y + 78
+    : sampleY + sampleSize + (compact ? 16 : 20);
   const availableClueWidth = landscape
     ? modalWidth * 0.45 - 32
     : modalWidth - 62;
@@ -592,7 +675,8 @@ export const drawHowToPlayModal = (
     const rowY = clueStart + index * clueStep;
     const swatch = scene.add.graphics();
     const swatchGap = clue.colors.length > 1 ? 1 : 0;
-    const swatchWidth = (24 - swatchGap * (clue.colors.length - 1)) / clue.colors.length;
+    const swatchWidth =
+      (24 - swatchGap * (clue.colors.length - 1)) / clue.colors.length;
     clue.colors.forEach((color, colorIndex) => {
       swatch.fillStyle(color, 1);
       swatch.fillRoundedRect(
@@ -714,7 +798,8 @@ export const drawPlainRivalryRecord = (
       .setOrigin(0, 0.5)
   );
   const gap = 12;
-  const totalWidth = labels.reduce((sum, label) => sum + label.width, 0) + gap * 2;
+  const totalWidth =
+    labels.reduce((sum, label) => sum + label.width, 0) + gap * 2;
   let x = centerX - totalWidth / 2;
   labels.forEach((label) => {
     label.setX(x);

@@ -54,6 +54,10 @@ const getRenderScale = (width: number, height: number): number => {
 const getCameraOffset = (size: number, renderScale: number): number =>
   -(size * (renderScale - 1)) / 2;
 
+export const getHighDensityRenderScale = getRenderScale;
+
+export const getHighDensityCameraOffset = getCameraOffset;
+
 const prepareSceneCamera = (
   scene: Scene,
   renderWidth: number,

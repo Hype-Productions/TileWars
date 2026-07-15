@@ -672,7 +672,7 @@
   grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-height: 48px;
+  min-height: 62px;
   padding: 8px 10px;
   border: 2px solid rgba(20, 33, 48, 0.2);
   border-radius: 8px;
@@ -743,10 +743,25 @@
 }
 
 .score {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
   color: rgba(20, 33, 48, 0.7);
   font-size: 0.8rem;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.score-guesses {
+  color: var(--ink);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.score-time {
+  color: rgba(20, 33, 48, 0.62);
+  font-size: 0.7rem;
+  line-height: 1;
 }
 
 @media (min-width: 641px) and (min-height: 431px) {

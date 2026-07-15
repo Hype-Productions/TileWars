@@ -53,6 +53,7 @@ export type DailyResult = {
   puzzleNumber: number;
   guesses: number;
   solvedAt: number;
+  durationMs?: number;
 };
 
 export type LeaderboardEntry = {
@@ -60,6 +61,7 @@ export type LeaderboardEntry = {
   displayName: string;
   guesses: number;
   solvedAt: number;
+  durationMs?: number;
 };
 
 export type LeaderboardDisplayRow =

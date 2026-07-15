@@ -51,7 +51,11 @@ export const saveBestDailyResult = async (
     ? leaderboardScore(existing.guesses, existing.solvedAt)
     : null;
 
-  if (existingScore !== null && existingScore <= nextScore) {
+  if (
+    existingScore !== null &&
+    existingScore <= nextScore &&
+    existing?.durationMs !== undefined
+  ) {
     return;
   }
 
@@ -93,7 +97,8 @@ export const loadDailyLeaderboard = async (
   const leaderboard = await entriesForMembers(
     resultKey,
     rankedMembers.map((member) => member.member),
-    1
+    1,
+    date
   );
   const playerRankIndex = await redis.zRank(leaderboardKey, userId);
 
@@ -107,7 +112,8 @@ export const loadDailyLeaderboard = async (
   const playerEntries = await entriesForMembers(
     resultKey,
     [userId],
-    playerRankIndex + 1
+    playerRankIndex + 1,
+    date
   );
 
   return {
@@ -119,34 +125,47 @@ export const loadDailyLeaderboard = async (
 const entriesForMembers = async (
   resultKey: string,
   userIds: string[],
-  firstRank: number
+  firstRank: number,
+  date: string
 ): Promise<LeaderboardEntry[]> => {
   if (userIds.length === 0) {
     return [];
   }
 
   const values = await redis.hMGet(resultKey, userIds);
-  const entries: LeaderboardEntry[] = [];
+  const entries = await Promise.all(
+    values.map(async (value, index): Promise<LeaderboardEntry | null> => {
+      if (!value) {
+        return null;
+      }
 
-  values.forEach((value, index) => {
-    if (!value) {
-      return;
-    }
+      const result = parseResult(value);
+      const userId = userIds[index] ?? '';
+      if (!result || userId.length === 0) {
+        return null;
+      }
 
-    const result = parseResult(value);
-    if (!result) {
-      return;
-    }
+      let durationMs = result.durationMs;
+      if (durationMs === undefined) {
+        const session = parseSession(
+          (await redis.get(storageKeys.dailySession(date, userId))) ?? ''
+        );
+        if (session?.solved && session.solvedAt !== null) {
+          durationMs = Math.max(0, session.solvedAt - session.startedAt);
+        }
+      }
 
-    entries.push({
-      rank: firstRank + index,
-      displayName: result.displayName,
-      guesses: result.guesses,
-      solvedAt: result.solvedAt,
-    });
-  });
+      return {
+        rank: firstRank + index,
+        displayName: result.displayName,
+        guesses: result.guesses,
+        solvedAt: result.solvedAt,
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      };
+    })
+  );
 
-  return entries;
+  return entries.filter((entry): entry is LeaderboardEntry => entry !== null);
 };
 
 const parseSession = (value: string): PlayerSession | null => {
@@ -198,7 +217,8 @@ const isDailyResult = (value: unknown): value is DailyResult => {
     typeof value.date === 'string' &&
     typeof value.puzzleNumber === 'number' &&
     typeof value.guesses === 'number' &&
-    typeof value.solvedAt === 'number'
+    typeof value.solvedAt === 'number' &&
+    (value.durationMs === undefined || typeof value.durationMs === 'number')
   );
 };
 

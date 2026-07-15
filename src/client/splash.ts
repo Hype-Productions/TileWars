@@ -9,6 +9,7 @@ import {
   selectLeaderboardDisplayRows,
 } from '../shared/game';
 import { todayUtcDate } from '../shared/pattern';
+import { formatOptionalDuration } from '../shared/time';
 import type { PlayerProgressSummary } from '../shared/progression';
 import type { VersusInviteSummary } from '../shared/versus';
 import { getVersusInvite } from './versusClient';
@@ -592,7 +593,7 @@ function renderDailyNumber(): void {
   }
   const puzzleNumber = createDailyPuzzleId(todayUtcDate()).puzzleNumber;
   dailyNumber.textContent = `#${puzzleNumber}`;
-  dailyNumber.setAttribute('aria-label', `Daily challenge ${puzzleNumber}`);
+  dailyNumber.setAttribute('aria-label', `Daily puzzle ${puzzleNumber}`);
 }
 
 async function loadDailyLeaderboard(): Promise<void> {
@@ -650,7 +651,13 @@ function renderLeaderboard(
     player.className = 'player';
     player.textContent = entry.displayName;
     score.className = 'score';
-    score.textContent = `${entry.guesses} ${entry.guesses === 1 ? 'guess' : 'guesses'}`;
+    const guesses = document.createElement('span');
+    const time = document.createElement('span');
+    guesses.className = 'score-guesses';
+    time.className = 'score-time';
+    guesses.textContent = `${entry.guesses} ${entry.guesses === 1 ? 'guess' : 'guesses'}`;
+    time.textContent = formatLeaderboardTime(entry.durationMs);
+    score.append(guesses, time);
     item.append(rank, player, score);
     leaderboardList.append(item);
   }
@@ -737,7 +744,8 @@ function isLeaderboardEntry(value: unknown): value is LeaderboardEntry {
     isNumber(value.rank) &&
     typeof value.displayName === 'string' &&
     isNumber(value.guesses) &&
-    isNumber(value.solvedAt)
+    isNumber(value.solvedAt) &&
+    (value.durationMs === undefined || isNumber(value.durationMs))
   );
 }
 
@@ -747,4 +755,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function formatLeaderboardTime(durationMs: number | undefined): string {
+  return formatOptionalDuration(durationMs);
 }

@@ -1,14 +1,12 @@
-import { GameObjects, Scene, Time } from 'phaser';
+import { GameObjects, Scene } from 'phaser';
 import { toggleMarkerInSession, type PlayerSession } from '../../shared/game';
 import {
   SerializedMarkerQueue,
   replayPendingMarkerOperations,
 } from '../../shared/markerSync';
-import {
-  type Coord,
-  coordKey,
-} from '../../shared/pattern';
+import { type Coord, coordKey } from '../../shared/pattern';
 import type { VersusMatchSummary } from '../../shared/versus';
+import { formatDuration } from '../../shared/time';
 import {
   getVersusSession,
   postVersusSession,
@@ -58,9 +56,6 @@ export class VersusGame extends Scene {
   private boardX = 0;
   private boardY = 0;
   private tileSize = 72;
-  private serverNowAtSync = 0;
-  private clientNowAtSync = 0;
-  private clockEvent: Time.TimerEvent | null = null;
   private sceneShell: TileWarsSceneShell | null = null;
 
   constructor() {
@@ -84,11 +79,6 @@ export class VersusGame extends Scene {
     this.cameras.main.setBackgroundColor(0xf6f0e8);
     this.scale.on('resize', this.handleResize, this);
     this.events.once('shutdown', this.handleShutdown, this);
-    this.clockEvent = this.time.addEvent({
-      delay: 250,
-      loop: true,
-      callback: () => this.updateClockText(),
-    });
     this.render();
     void this.loadSession();
   }
@@ -99,8 +89,6 @@ export class VersusGame extends Scene {
 
   private handleShutdown(): void {
     this.scale.off('resize', this.handleResize, this);
-    this.clockEvent?.destroy();
-    this.clockEvent = null;
   }
 
   private async loadSession(): Promise<void> {
@@ -148,25 +136,23 @@ export class VersusGame extends Scene {
           wordWrap: { width: width - 36 },
         })
         .setOrigin(0.5);
-      this.createButton(
-        52,
-        34,
-        'Lobby',
-        () => this.scene.start('VersusLobby'),
-        'orange'
-      );
       return;
     }
 
     this.add
-      .text(width / 2, shortLandscape ? 54 : 74, `vs ${this.match.opponentDisplayName}`, {
-        fontFamily: 'Arial Black, Arial, sans-serif',
-        fontSize: mobile ? '19px' : '23px',
-        color: '#18212b',
-        resolution: TEXT_RESOLUTION,
-      })
+      .text(
+        width / 2,
+        shortLandscape ? 54 : 74,
+        `vs ${this.match.opponentDisplayName}`,
+        {
+          fontFamily: 'Arial Black, Arial, sans-serif',
+          fontSize: mobile ? '19px' : '23px',
+          color: '#18212b',
+          resolution: TEXT_RESOLUTION,
+        }
+      )
       .setOrigin(0.5);
-    const statY = shortLandscape ? 82 : 103;
+    const statY = shortLandscape ? 88 : 110;
     drawPlainRivalryRecord(
       this,
       width / 2,
@@ -178,24 +164,12 @@ export class VersusGame extends Scene {
     this.layoutBoard(mobile, shortLandscape);
     this.createTiles();
     this.drawStatsHud(mobile, shortLandscape);
-    this.add
-      .text(
-        width / 2,
-        this.boardY + this.boardSize + (shortLandscape ? 11 : 15),
-        '',
-        {
-          fontFamily: 'Arial Black, Arial, sans-serif',
-          fontSize: mobile ? '13px' : '15px',
-          color: '#ffffff',
-          backgroundColor: '#ffb12d',
-          padding: { left: 8, right: 8, top: 5, bottom: 5 },
-          resolution: TEXT_RESOLUTION,
-        }
-      )
-      .setName('versus-clock')
-      .setOrigin(0.5);
 
-    const buttonY = shortLandscape ? height - 24 : mobile ? height - 30 : height - 42;
+    const buttonY = shortLandscape
+      ? height - 24
+      : mobile
+        ? height - 30
+        : height - 42;
     this.createButton(
       width / 2 - 124,
       buttonY,
@@ -224,8 +198,12 @@ export class VersusGame extends Scene {
       'dark'
     );
 
+    const statusY = Math.min(
+      buttonY - 22,
+      Math.max(buttonY - 40, this.boardY + this.boardSize + 20)
+    );
     this.add
-      .text(width / 2, buttonY - 40, this.status, {
+      .text(width / 2, statusY, this.status, {
         fontFamily: 'Arial, sans-serif',
         fontSize: '14px',
         color: '#33404c',
@@ -235,7 +213,6 @@ export class VersusGame extends Scene {
       .setOrigin(0.5);
 
     this.redrawTiles();
-    this.updateClockText();
     if (this.modal === 'help') {
       this.drawHelpModal();
     } else if (this.modal === 'finished') {
@@ -254,19 +231,20 @@ export class VersusGame extends Scene {
       this.boardY = 145;
     } else if (mobile) {
       this.boardSize = snapBoardSize(
-        Math.max(225, Math.min(width - 26, height - 316, 360))
+        Math.max(225, Math.min(width - 26, height - 356, 360))
       );
       this.boardX = Math.round((width - this.boardSize) / 2);
       this.boardY = Math.round(
-        Math.max(174, (height - this.boardSize) / 2 + 24)
+        Math.max(246, (height - this.boardSize) / 2 + 42)
       );
     } else {
+      const minimumBoardSize = height < 560 ? 200 : 240;
       this.boardSize = snapBoardSize(
-        Math.max(320, Math.min(width - 80, height - 300, 460))
+        Math.max(minimumBoardSize, Math.min(width - 80, height - 340, 460))
       );
       this.boardX = Math.round((width - this.boardSize) / 2);
       this.boardY = Math.round(
-        Math.max(174, (height - this.boardSize) / 2 + 12)
+        Math.max(260, (height - this.boardSize) / 2 + 28)
       );
     }
     this.tileSize = this.boardSize / 5;
@@ -489,8 +467,6 @@ export class VersusGame extends Scene {
   }): void {
     this.session = response.session;
     this.match = response.match;
-    this.serverNowAtSync = response.serverNow;
-    this.clientNowAtSync = Date.now();
   }
 
   private async openResolvedResult(): Promise<void> {
@@ -507,28 +483,20 @@ export class VersusGame extends Scene {
       return;
     }
     const tileSize = shortLandscape ? 22 : mobile ? 26 : 30;
+    const tileY =
+      this.boardY - tileSize / 2 - (shortLandscape ? 6 : mobile ? 16 : 18);
     drawGameplayStatsHud(this, {
       centerX: this.scale.width / 2,
-      labelY: shortLandscape ? 105 : 132,
-      tileY: shortLandscape ? 128 : 157,
+      labelY: tileY - tileSize / 2 - (shortLandscape ? 8 : 10),
+      tileY,
       totalTiles: this.session.totalTiles,
       foundTiles: this.session.foundKeys.length,
       guesses: this.session.guesses.length,
       tileSize,
       gap: shortLandscape ? 3 : 4,
       groupGap: shortLandscape ? 18 : mobile ? 22 : 30,
+      stacked: !shortLandscape,
     });
-  }
-
-  private updateClockText(): void {
-    const clock = this.children.getByName('versus-clock');
-    if (!(clock instanceof GameObjects.Text) || !this.session) {
-      return;
-    }
-    const end =
-      this.session.solvedAt ??
-      this.serverNowAtSync + Math.max(0, Date.now() - this.clientNowAtSync);
-    clock.setText(formatDuration(Math.max(0, end - this.session.startedAt)));
   }
 
   private drawHelpModal(): void {
@@ -611,9 +579,15 @@ export class VersusGame extends Scene {
           maxLines: 3,
         })
         .setOrigin(0.5, 0);
-      this.createButton(width / 2, y + modalHeight - 34, 'Lobby', () => {
-        this.scene.start('VersusLobby');
-      }, 'orange');
+      this.createButton(
+        width / 2,
+        y + modalHeight - 34,
+        'Lobby',
+        () => {
+          this.scene.start('VersusLobby');
+        },
+        'orange'
+      );
     } else {
       this.add
         .text(width / 2, y + 78, lines.join('\n'), {
@@ -629,10 +603,16 @@ export class VersusGame extends Scene {
           maxLines: 5,
         })
         .setOrigin(0.5, 0);
-      this.createButton(width / 2, y + modalHeight - 34, 'Close', () => {
-        this.modal = 'none';
-        this.render();
-      }, 'red');
+      this.createButton(
+        width / 2,
+        y + modalHeight - 34,
+        'Close',
+        () => {
+          this.modal = 'none';
+          this.render();
+        },
+        'red'
+      );
     }
   }
 
@@ -687,13 +667,6 @@ export class VersusGame extends Scene {
     });
   }
 }
-
-const formatDuration = (durationMs: number): string => {
-  const totalSeconds = Math.floor(durationMs / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-};
 
 const snapBoardSize = (value: number): number => {
   return Math.max(5, Math.floor(value / 5) * 5);

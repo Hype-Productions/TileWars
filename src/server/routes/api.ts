@@ -90,6 +90,7 @@ api.post('/daily/guess', async (c) => {
       puzzleNumber: nextSession.puzzleId.puzzleNumber,
       guesses: nextSession.guesses.length,
       solvedAt: nextSession.solvedAt,
+      durationMs: Math.max(0, nextSession.solvedAt - nextSession.startedAt),
     });
 
     const leaderboard = await loadDailyLeaderboard(
